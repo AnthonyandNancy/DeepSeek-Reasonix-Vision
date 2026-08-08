@@ -2753,13 +2753,13 @@ export const en = {
 
   // assistant message
   "msg.thinking": "thinking",
-  "visionProgress.preparing": "Preparing visual analysis",
+  "visionProgress.preparing": "Preparing image analysis",
   "visionProgress.connecting": "Connecting to vision model",
-  "visionProgress.waiting": "Waiting for vision model",
-  "visionProgress.response": "Vision model response",
+  "visionProgress.waiting": "Waiting for vision model response",
+  "visionProgress.response": "Receiving visual analysis",
   "visionProgress.thinking": "Vision model thinking",
-  "visionProgress.parsing": "Parsing visual evidence",
-  "visionProgress.ready": "Visual evidence ready",
+  "visionProgress.parsing": "Structuring visual evidence",
+  "visionProgress.ready": "Visual analysis complete",
   "visionProgress.failed": "Visual analysis failed",
   "msg.thinkingRunning": "thinking…",
   "msg.thinkingDone": "done",

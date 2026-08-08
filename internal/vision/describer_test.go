@@ -32,6 +32,30 @@ func (p *captureProvider) Stream(_ context.Context, req provider.Request) (<-cha
 	return ch, nil
 }
 
+type gatedProvider struct {
+	req     provider.Request
+	first   provider.Chunk
+	rest    []provider.Chunk
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *gatedProvider) Name() string { return "gated" }
+func (p *gatedProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.req = req
+	ch := make(chan provider.Chunk, 1)
+	ch <- p.first
+	close(p.started)
+	go func() {
+		<-p.release
+		for _, chunk := range p.rest {
+			ch <- chunk
+		}
+		close(ch)
+	}()
+	return ch, nil
+}
+
 func validEvidenceJSON() string {
 	return `{"summary":"UI screenshot","ocr":{"full_text":"Save","lines":[{"text":"Save"}]},"layout":{"regions":[{"type":"form","reading_order":1,"text":"Save"}]},"semantics":{"scene":"web interface","entities":[{"name":"Save","type":"button","evidence":"OCR: Save"}],"relations":[]},"uncertainty":["implementation cause is not visible"]}`
 }
@@ -52,8 +76,8 @@ func TestProviderDescriberRequestsModLensV2JSONWithoutTools(t *testing.T) {
 	if p.req.ResponseFormat == nil || p.req.ResponseFormat.Type != "json_object" {
 		t.Fatalf("response format=%+v", p.req.ResponseFormat)
 	}
-	if p.req.Stream == nil || *p.req.Stream {
-		t.Fatalf("stream=%v, want explicit non-streaming vision request", p.req.Stream)
+	if p.req.Stream == nil || !*p.req.Stream {
+		t.Fatalf("stream=%v, want explicit streaming vision request", p.req.Stream)
 	}
 	if len(p.req.Messages) != 2 || len(p.req.Messages[1].Images) != 1 {
 		t.Fatalf("messages=%+v", p.req.Messages)
@@ -66,6 +90,55 @@ func TestProviderDescriberRequestsModLensV2JSONWithoutTools(t *testing.T) {
 	}
 	if !strings.Contains(p.req.Messages[1].Content, "why is the dialog clipped?") {
 		t.Fatalf("focus missing: %s", p.req.Messages[1].Content)
+	}
+}
+
+func TestProviderDescriberEmitsDeltasBeforeVisionStreamCompletes(t *testing.T) {
+	p := &gatedProvider{
+		first:   provider.Chunk{Type: provider.ChunkReasoning, Text: "checking pixels"},
+		rest:    []provider.Chunk{{Type: provider.ChunkText, Text: validEvidenceJSON()}},
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	events := make(chan event.Event, 16)
+	d := NewProviderDescriber(p, nil, event.FuncSink(func(e event.Event) { events <- e }))
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := d.DescribeOnce(context.Background(), "p/vision", []Image{{DataURL: "data:image/png;base64,AA=="}}, "")
+		done <- err
+	}()
+
+	select {
+	case <-p.started:
+	case <-time.After(time.Second):
+		t.Fatal("vision provider did not start")
+	}
+	seenThinking := false
+	deadline := time.After(time.Second)
+	for !seenThinking {
+		select {
+		case e := <-events:
+			if e.Kind == event.VisionProgress && e.VisionProgress != nil && e.VisionProgress.Stage == event.VisionStageThinking {
+				seenThinking = true
+			}
+		case <-deadline:
+			t.Fatal("vision reasoning delta was not emitted before stream completion")
+		}
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("DescribeOnce completed before the provider stream was released: %v", err)
+	default:
+	}
+
+	close(p.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("DescribeOnce: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DescribeOnce did not complete after releasing the provider stream")
 	}
 }
 

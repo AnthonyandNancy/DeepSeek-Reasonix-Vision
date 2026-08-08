@@ -5,6 +5,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 import type { Item } from "../lib/useController";
+import type { WireVisionProgress } from "../lib/types";
 
 let passed = 0;
 let failed = 0;
@@ -49,7 +50,7 @@ try {
   const { Transcript } = await server.ssrLoadModule("/src/components/Transcript.tsx");
   const { LocaleProvider } = await server.ssrLoadModule("/src/lib/i18n.tsx");
 
-  function render(items: Item[], options: { mode?: "standard" | "compact"; running?: boolean; turnStartAt?: number; foldPref?: "auto" | "expanded" } = {}) {
+  function render(items: Item[], options: { mode?: "standard" | "compact"; running?: boolean; turnStartAt?: number; foldPref?: "auto" | "expanded"; visionProgress?: WireVisionProgress } = {}) {
     displayMode = options.mode ?? "standard";
     processFoldPref = options.foldPref ?? "auto";
     const markup = renderToStaticMarkup(
@@ -62,6 +63,7 @@ try {
           questionNavigator: false,
           running: options.running ?? false,
           turnStartAt: options.turnStartAt,
+          visionProgress: options.visionProgress,
         }),
       ),
     );
@@ -77,6 +79,18 @@ try {
     { kind: "tool", id: "t2", name: "bash", args: "{}", readOnly: false, status: "done", durationMs: 600 },
     { kind: "assistant", id: "a3", text: "final answer", reasoning: "final thought", streaming: false, workDurationMs: 24_000 },
   ];
+
+  const visionDoc = render([
+    { kind: "user", id: "u-vision", text: "compare these images" },
+    { kind: "assistant", id: "a-vision", text: "", reasoning: "waiting", streaming: true },
+  ], {
+    running: true,
+    visionProgress: { stage: "thinking", modelRef: "vision/vl", reasoningDelta: "checking both images" },
+  });
+  const visionUser = visionDoc.querySelector(".msg--user");
+  const visionCard = visionDoc.querySelector(".vision-progress");
+  ok(Boolean(visionUser && visionCard && (visionUser.compareDocumentPosition(visionCard) & visionDoc.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING)), "vision progress renders below its user message");
+  ok(visionDoc.querySelector(".transcript")?.firstElementChild?.classList.contains("vision-progress") !== true, "vision progress is not rendered at transcript root");
 
   for (const mode of ["standard", "compact"] as const) {
     const doc = render(warningTurn, { mode });

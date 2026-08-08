@@ -34,6 +34,7 @@ if (!document.querySelector('[role="status"]')) throw new Error("vision card mus
 if (!document.body.textContent?.includes("vision/model")) throw new Error("vision card must show model");
 if (!document.body.textContent?.includes("visible")) throw new Error("vision card must show response output");
 if (!document.body.textContent?.includes("checking pixels")) throw new Error("vision card must show safe reasoning output");
+if (document.querySelectorAll("details[open]").length < 2) throw new Error("active vision reasoning and response sections must be open");
 
 await act(async () => root.unmount());
 dom.window.close();

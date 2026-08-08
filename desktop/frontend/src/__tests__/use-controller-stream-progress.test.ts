@@ -224,5 +224,17 @@ function ev(s: typeof initialState, e: WireEvent) {
   eq(s.retry, undefined, "fresh idle snapshot clears the retry indicator");
 }
 
+// --- 5. a vision retry does not append to the failed attempt ---
+{
+  let s = ev({ ...initialState }, { kind: "turn_started" } as WireEvent);
+  s = ev(s, {
+    kind: "vision_progress",
+    visionProgress: { stage: "failed", responseDelta: "partial old JSON", reasoningDelta: "old reasoning" },
+  } as WireEvent);
+  s = ev(s, { kind: "vision_progress", visionProgress: { stage: "preparing" } } as WireEvent);
+  eq(s.visionProgress?.responseDelta ?? "", "", "vision retry clears the failed response buffer");
+  eq(s.visionProgress?.reasoningDelta ?? "", "", "vision retry clears the failed reasoning buffer");
+}
+
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);

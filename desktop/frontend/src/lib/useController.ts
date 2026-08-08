@@ -1359,13 +1359,14 @@ function applyEvent(s: State, e: WireEvent): State {
       const previous = s.visionProgress;
       const incoming = e.visionProgress;
       const active = new Set(["preparing", "connecting", "waiting", "response", "thinking", "parsing"]);
+      const newAttempt = incoming.stage === "preparing" && (previous?.stage === "failed" || previous?.stage === "cancelled");
       return {
         ...s,
         visionProgress: {
           ...previous,
           ...incoming,
-          responseDelta: (previous?.responseDelta ?? "") + (incoming.responseDelta ?? ""),
-          reasoningDelta: (previous?.reasoningDelta ?? "") + (incoming.reasoningDelta ?? ""),
+          responseDelta: newAttempt ? (incoming.responseDelta ?? "") : (previous?.responseDelta ?? "") + (incoming.responseDelta ?? ""),
+          reasoningDelta: newAttempt ? (incoming.reasoningDelta ?? "") : (previous?.reasoningDelta ?? "") + (incoming.reasoningDelta ?? ""),
         },
         running: active.has(incoming.stage) ? true : s.running,
       };

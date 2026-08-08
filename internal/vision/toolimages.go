@@ -63,27 +63,32 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 	}
 	if p == nil || p.describer == nil || strings.TrimSpace(p.modelRef) == "" {
 		if p != nil {
-			p.emitNotice(event.LevelWarn, "Tool images unavailable", fmt.Sprintf("Tool %s returned image content, but no usable vision evidence model is configured.", toolName))
+			p.emitProgress(event.VisionStageFailed, "model_unavailable")
 		}
 		return ToolImageOutput{Text: AppendToolImageStatusWithin(in.ToolText, toolName, maxText), Images: nil, Debug: "no vision evidence model configured"}
 	}
 	imgs := toToolVisionImages(in.Images, toolName)
 	attempts := 0
+	var lastErr error
 	for attempts < p.maxAttempts {
 		attempts++
-		p.emitPhase(fmt.Sprintf("Extracting visual evidence from %s image(s) (%d/%d)", toolName, attempts, p.maxAttempts))
+		p.emitProgress(event.VisionStagePreparing, "")
 		ev, _, err := p.describer.DescribeToolImagesOnce(ctx, p.modelRef, ToolImageDescribeInput{ToolName: toolName, ToolText: truncateToolContext(in.ToolText, maxToolContextBytes), TaskContext: truncateToolContext(in.TaskContext, maxToolContextBytes), Images: imgs})
 		if err == nil {
 			evidence := RenderEvidenceContextWithin(ev, "tool:"+toolName, maxToolEvidenceBytes)
 			final := appendBoundedToolBlock(in.ToolText, "\n\n", evidence, "\n", maxText)
-			p.emitSuccessNotice(in, toolName, attempts, evidence, final)
 			return ToolImageOutput{Text: final, Images: nil, Success: true, Attempts: attempts, Debug: evidence}
 		}
+		lastErr = err
 		if ctx.Err() != nil {
 			break
 		}
 	}
-	p.emitNotice(event.LevelWarn, "Tool visual evidence extraction failed", fmt.Sprintf("Tool %s image content was not readable after %d/%d attempt(s).", toolName, attempts, p.maxAttempts))
+	detail := visionFailureDetail(lastErr)
+	if ctx.Err() != nil {
+		detail = visionFailureDetail(ctx.Err())
+	}
+	p.emitProgress(event.VisionStageFailed, detail)
 	return ToolImageOutput{Text: AppendToolImageStatusWithin(in.ToolText, toolName, maxText), Images: nil, Attempts: attempts, Debug: fmt.Sprintf("vision evidence failed after %d attempt(s)", attempts)}
 }
 
@@ -179,23 +184,10 @@ func truncateToolContext(text string, maxBytes int) string {
 	return text[:cut] + "\n……[content truncated]……"
 }
 
-func (p *ProviderToolImageProcessor) emitPhase(text string) {
+func (p *ProviderToolImageProcessor) emitProgress(stage event.VisionProgressStage, detail string) {
 	if p != nil && p.sink != nil {
-		p.sink.Emit(event.Event{Kind: event.Phase, Text: text, Source: event.UsageSourceVision})
+		p.sink.Emit(event.Event{Kind: event.VisionProgress, ModelRef: p.modelRef, Source: event.UsageSourceVision, VisionProgress: &event.VisionProgressInfo{
+			Stage: stage, ModelRef: p.modelRef, Detail: detail,
+		}})
 	}
-}
-func (p *ProviderToolImageProcessor) emitNotice(level event.Level, text, detail string) {
-	if p != nil && p.sink != nil {
-		p.sink.Emit(event.Event{Kind: event.Notice, Level: level, Text: text, Detail: detail, Source: event.UsageSourceVision})
-	}
-}
-func (p *ProviderToolImageProcessor) emitSuccessNotice(in ToolImageInput, toolName string, attempts int, evidence, final string) {
-	if p == nil || p.sink == nil {
-		return
-	}
-	model := p.modelRef
-	if model == "" {
-		model = "configured vision model"
-	}
-	p.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("Visual evidence ready: %s (%d/%d)", model, attempts, p.maxAttempts), ModelRef: model, Detail: "Source tool: " + toolName + "\n\n" + truncateToolContext(evidence, maxToolEvidenceBytes) + "\n\nFinal tool text:\n" + truncateToolContext(final, maxToolEvidenceBytes*2), Source: event.UsageSourceVision})
 }

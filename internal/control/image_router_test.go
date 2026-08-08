@@ -8,22 +8,25 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/event"
 	"reasonix/internal/provider"
 	"reasonix/internal/vision"
 )
 
 type routeEvidenceDescriber struct {
-	calls int
-	errs  []error
+	calls        int
+	errs         []error
+	imageBatches [][]vision.Image
 }
 
 func routeTestEvidence() vision.Evidence {
 	return vision.Evidence{Summary: "dialog clipped", OCR: vision.OCR{Lines: []vision.OCRLine{{Text: "Save"}}}, Layout: vision.Layout{Regions: []vision.LayoutRegion{{Type: "form", ReadingOrder: 1, Text: "Save"}}}, Semantics: vision.Semantics{Scene: "web UI", Entities: []vision.SemanticEntity{}, Relations: []vision.SemanticRelation{}}, Uncertainty: []string{"root cause not visible"}}
 }
 
-func (d *routeEvidenceDescriber) DescribeOnce(context.Context, string, []vision.Image, string) (vision.Evidence, *provider.Usage, error) {
+func (d *routeEvidenceDescriber) DescribeOnce(_ context.Context, _ string, images []vision.Image, _ string) (vision.Evidence, *provider.Usage, error) {
 	idx := d.calls
 	d.calls++
+	d.imageBatches = append(d.imageBatches, append([]vision.Image(nil), images...))
 	if idx < len(d.errs) && d.errs[idx] != nil {
 		return vision.Evidence{}, nil, d.errs[idx]
 	}
@@ -68,6 +71,59 @@ func TestRouteImagesUsesModLensEvidenceForTextMainModel(t *testing.T) {
 		if !strings.Contains(res.Input, want) {
 			t.Fatalf("missing %q: %s", want, res.Input)
 		}
+	}
+}
+
+func TestRouteImagesPassesAllUserImagesToVisionAndRemovesRawRefsFromMainInput(t *testing.T) {
+	root := t.TempDir()
+	writeImageRouteConfig(t, root)
+	d := &routeEvidenceDescriber{}
+	c := &Controller{workspaceRoot: root, modelRef: "text/main", visionModelRef: "vision/vl", visionDescriber: d}
+	input := "Referenced context:\n\n<image path=\"a.png\">\n[image note]\n</image>\n\ncompare @a.png and @b.png"
+	images := []ResolvedImage{
+		{Ref: "@a.png", Path: "a.png", DataURL: "data:image/png;base64,AA=="},
+		{Ref: "@b.png", Path: "b.png", DataURL: "data:image/png;base64,BB=="},
+	}
+
+	res := c.routeImagesOnce(context.Background(), &ImageRouteState{}, input, "compare the images", images)
+	if res.Mode != ImageRouteVisionEvidence {
+		t.Fatalf("route mode = %v, want visual evidence", res.Mode)
+	}
+	if len(d.imageBatches) != 1 || len(d.imageBatches[0]) != 2 {
+		t.Fatalf("vision image batches = %+v, want one batch containing both images", d.imageBatches)
+	}
+	if strings.Contains(res.Input, "@a.png") || strings.Contains(res.Input, "@b.png") || strings.Contains(res.Input, "<image path=") {
+		t.Fatalf("main model input still exposes raw user image refs: %q", res.Input)
+	}
+}
+
+func TestRouteImagesUsesStructuredVisionProgressInsteadOfHardcodedPhase(t *testing.T) {
+	root := t.TempDir()
+	writeImageRouteConfig(t, root)
+	d := &routeEvidenceDescriber{}
+	var events []event.Event
+	c := &Controller{
+		workspaceRoot:   root,
+		modelRef:        "text/main",
+		visionModelRef:  "vision/vl",
+		visionDescriber: d,
+		sink:            event.FuncSink(func(e event.Event) { events = append(events, e) }),
+	}
+	c.routeImagesOnce(context.Background(), &ImageRouteState{}, "fix it", "why clipped?", []ResolvedImage{{DataURL: "data:image/png;base64,AA=="}})
+
+	hasStructuredProgress := false
+	for _, e := range events {
+		if e.Kind == event.Phase || e.Kind == event.Notice {
+			if strings.Contains(e.Text, "Extracting ModLens") || strings.Contains(e.Text, "Visual evidence ready") {
+				t.Fatalf("vision route emitted hardcoded user text: %+v", e)
+			}
+		}
+		if e.Kind == event.VisionProgress && e.VisionProgress != nil && e.VisionProgress.Stage == event.VisionStagePreparing {
+			hasStructuredProgress = true
+		}
+	}
+	if !hasStructuredProgress {
+		t.Fatal("vision route emitted no structured preparing progress")
 	}
 }
 

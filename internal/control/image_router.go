@@ -14,9 +14,13 @@ import (
 
 const (
 	maxVisionAttemptsPerTurn   = 3
-	maxVisionDebugPromptBytes  = 96 * 1024
 	maxUserVisionEvidenceBytes = 48 * 1024
 )
+
+const directUserImageEvidenceReady = `<direct-visual-input-status>
+The attached user image(s) were already analyzed by the configured visual evidence model.
+Use the ModLens v2 evidence below for this turn. Do not call an image or vision MCP tool for these same user attachments.
+</direct-visual-input-status>`
 
 type ImageRouteMode uint8
 
@@ -131,13 +135,12 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 	visionImages := toVisionImages(images)
 	for state.VisionAttempts < maxVisionAttemptsPerTurn {
 		state.VisionAttempts++
-		c.emitVisionRouteProgress(status.ModelRef, state.VisionAttempts)
+		c.emitVisionRouteProgress(status.ModelRef)
 		ev, usage, err := c.visionDescriber.DescribeOnce(ctx, status.ModelRef, visionImages, rawQuestion)
 		if err == nil {
 			state.Resolved = true
 			evidence := vision.RenderEvidenceContextWithin(ev, "user-attachment", maxUserVisionEvidenceBytes)
-			final := input + "\n\n" + evidence + "\n"
-			c.emitVisionRouteDebug(status.ModelRef, state.VisionAttempts, evidence, final)
+			final := joinVisualEvidenceInput(stripResolvedUserImageContext(input, images), evidence)
 			return ImageRouteResult{Mode: ImageRouteVisionEvidence, Input: final, Images: nil, VisionUsage: usage}
 		}
 		if ctx.Err() != nil {
@@ -148,28 +151,50 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 	return pathOnlyResult(input, images, fmt.Sprintf("visual evidence extraction failed after %d attempt(s)", state.VisionAttempts))
 }
 
-func (c *Controller) emitVisionRouteProgress(modelRef string, attempt int) {
+func joinVisualEvidenceInput(input, evidence string) string {
+	parts := make([]string, 0, 3)
+	if input = strings.TrimSpace(input); input != "" {
+		parts = append(parts, input)
+	}
+	parts = append(parts, directUserImageEvidenceReady, strings.TrimSpace(evidence))
+	return strings.Join(parts, "\n\n") + "\n"
+}
+
+func stripResolvedUserImageContext(input string, images []ResolvedImage) string {
+	cleaned := input
+	for _, image := range images {
+		ref := strings.TrimSpace(image.Ref)
+		if ref != "" {
+			if !strings.HasPrefix(ref, "@") {
+				ref = "@" + ref
+			}
+			cleaned = strings.ReplaceAll(cleaned, ref, "")
+		}
+		path := strings.TrimSpace(filepath.ToSlash(image.Path))
+		if path == "" {
+			continue
+		}
+		start := strings.Index(cleaned, `<image path="`+path+`">`)
+		if start < 0 {
+			continue
+		}
+		end := strings.Index(cleaned[start:], "</image>")
+		if end < 0 {
+			continue
+		}
+		end += start + len("</image>")
+		cleaned = cleaned[:start] + cleaned[end:]
+	}
+	return strings.TrimSpace(cleaned)
+}
+
+func (c *Controller) emitVisionRouteProgress(modelRef string) {
 	if c == nil || c.sink == nil {
 		return
 	}
-	c.sink.Emit(event.Event{Kind: event.Phase, Text: fmt.Sprintf("Extracting ModLens v2 visual evidence with %s (%d/%d)", modelRef, attempt, maxVisionAttemptsPerTurn), Source: event.UsageSourceVision})
-}
-func (c *Controller) emitVisionRouteDebug(modelRef string, attempt int, evidence, final string) {
-	if c == nil || c.sink == nil {
-		return
-	}
-	detail := "Visual evidence:\n" + evidence + "\n\nFinal current-user input:\n" + boundedVisionDebugText(final, maxVisionDebugPromptBytes)
-	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("Visual evidence ready: %s (%d/%d)", modelRef, attempt, maxVisionAttemptsPerTurn), ModelRef: modelRef, Detail: detail, Source: event.UsageSourceVision})
-}
-func boundedVisionDebugText(text string, maxBytes int) string {
-	if maxBytes <= 0 || len(text) <= maxBytes {
-		return text
-	}
-	cut := maxBytes
-	for cut > 0 && text[cut]&0xc0 == 0x80 {
-		cut--
-	}
-	return text[:cut] + "\n\n…[debug prompt truncated]…"
+	c.sink.Emit(event.Event{Kind: event.VisionProgress, ModelRef: modelRef, Source: event.UsageSourceVision, VisionProgress: &event.VisionProgressInfo{
+		Stage: event.VisionStagePreparing, ModelRef: modelRef,
+	}})
 }
 func pathOnlyResult(input string, images []ResolvedImage, notice string) ImageRouteResult {
 	return ImageRouteResult{Mode: ImageRoutePathOnly, Input: injectImageUnavailableContext(input, images, notice), Notice: notice}

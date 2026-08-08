@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"reasonix/internal/event"
 	"reasonix/internal/provider"
 )
 
@@ -47,6 +48,26 @@ func TestToolImageProcessorInjectsModLensEvidenceForTextModel(t *testing.T) {
 		if !strings.Contains(out.Text, want) {
 			t.Fatalf("missing %q in %s", want, out.Text)
 		}
+	}
+}
+
+func TestToolImageProcessorUsesStructuredVisionProgress(t *testing.T) {
+	d := &fakeEvidenceDescriber{evidence: smallEvidence()}
+	events := make([]event.Event, 0, 4)
+	p := NewToolImageProcessor("p/vision", d, event.FuncSink(func(e event.Event) { events = append(events, e) }))
+	p.ProcessToolImages(context.Background(), ToolImageInput{ToolName: "browser", ToolText: "screenshot", Images: []string{"data:image/png;base64,AA=="}})
+
+	hasPreparing := false
+	for _, e := range events {
+		if e.Kind == event.Phase || e.Kind == event.Notice {
+			t.Fatalf("tool image processor emitted unstructured progress: %+v", e)
+		}
+		if e.Kind == event.VisionProgress && e.VisionProgress != nil && e.VisionProgress.Stage == event.VisionStagePreparing {
+			hasPreparing = true
+		}
+	}
+	if !hasPreparing {
+		t.Fatal("tool image processor emitted no structured preparing progress")
 	}
 }
 

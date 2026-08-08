@@ -293,7 +293,7 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	} else {
 		a.repeatFailureScope = ""
 	}
-	a.sink.Emit(event.Event{Kind: event.TurnStarted})
+	a.emitTurnStarted(ctx)
 	input = a.withTurnPreferences(providerInput)
 	userCreatedAt := time.Now().UnixMilli()
 	a.activeTurnCreatedAt.Store(userCreatedAt)

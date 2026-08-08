@@ -98,7 +98,7 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 	visionCtx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
 	visionCtx = provider.WithMaxRetries(visionCtx, 0)
-	stream := false
+	stream := true
 	req := provider.Request{
 		Messages:       []provider.Message{{Role: provider.RoleSystem, Content: systemPrompt}, {Role: provider.RoleUser, Content: userPrompt, Images: imageDataURLs(images)}},
 		Tools:          nil,

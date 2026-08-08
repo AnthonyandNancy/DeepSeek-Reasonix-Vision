@@ -139,6 +139,8 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 		defer func() { c.hooks.StopResult(context.Background(), lastAssistantText(c.History()), turn, err) }()
 	}
 
+	c.markInFlightTurn(startMessages, true)
+	c.sink.Emit(event.Event{Kind: event.TurnStarted})
 	route := c.routeImagesOnce(ctx, &ImageRouteState{}, input, raw, resolvedImages)
 	ctx = agent.WithUserImages(ctx, route.Images)
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
@@ -147,14 +149,12 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 		c.emitImageRouteNotice(route.Notice)
 	}
 
-	c.markInFlightTurn(startMessages, true)
 	inFlight := true
 	defer func() {
 		if inFlight {
 			c.clearInFlightTurn()
 		}
 	}()
-	c.sink.Emit(event.Event{Kind: event.TurnStarted})
 	if c.executor == nil {
 		return fmt.Errorf("subagent slash invocation requires an active session")
 	}
@@ -265,6 +265,9 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 		defer func() { c.hooks.StopResult(context.Background(), lastAssistantText(c.History()), turn, err) }()
 	}
 
+	c.markInFlightTurn(startMessages, !turn.synthetic && !IsSyntheticUserMessage(turn.raw))
+	ctx = agent.WithTurnStartedEventEmitted(ctx)
+	c.sink.Emit(event.Event{Kind: event.TurnStarted})
 	route := c.routeImagesOnce(ctx, &ImageRouteState{}, input, turn.raw, resolvedImages)
 	ctx = agent.WithUserImages(ctx, route.Images)
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
@@ -273,7 +276,6 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 		c.emitImageRouteNotice(route.Notice)
 	}
 
-	c.markInFlightTurn(startMessages, !turn.synthetic && !IsSyntheticUserMessage(turn.raw))
 	var autoResearchTaskID string
 	if continuation != nil {
 		autoResearchTaskID = continuation.autoResearchTaskID

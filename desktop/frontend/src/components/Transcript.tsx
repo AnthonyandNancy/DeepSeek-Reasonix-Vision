@@ -892,11 +892,14 @@ export function Transcript({
           editDisabled={rewindDisabled || !checkpoint?.canConversation}
         />,
       );
+      if (visionProgress && index === hotGroups.length - 1) {
+        out.push(<VisionProgressCard key={`vision-progress-${user.id}`} progress={visionProgress} />);
+      }
       pushTurnBody(user.id, turnItems, turnIsActive);
       if (!turnIsActive) pushTurnActions(turn, turnItems);
     }
     return out;
-  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onEditPrompt, onPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, turnGroups, tabId, actionHoverMenus, creationMode, lastTurn, turnStartAt, liveId, liveHasAnswerText, liveHasReasoning, t]);
+  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, visionProgress, onEditPrompt, onPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, turnGroups, tabId, actionHoverMenus, creationMode, lastTurn, turnStartAt, liveId, liveHasAnswerText, liveHasReasoning, t]);
 
   // ── Assemble rendered output ──────────────────────────────────────────────
   // Warm/cold zone is a separate memo'd WarmZone component so streaming tokens
@@ -915,8 +918,6 @@ export function Transcript({
         onKeyDownCapture={handleKeyScrollIntent}
       >
         {empty && !hydrating && <Welcome onPrompt={onPrompt} variant={welcomeVariant} />}
-
-        {visionProgress && <VisionProgressCard progress={visionProgress} />}
 
         <LiveStreamContext.Provider value={live}>
           {hasOlderHistory && (
@@ -1713,7 +1714,7 @@ export function VisionProgressCard({ progress }: { progress: VisionProgress }) {
         </details>
       )}
       {reasoning && (
-        <details className="vision-progress__section">
+        <details className="vision-progress__section" open={!terminal}>
           <summary>{t("visionProgress.thinking")}</summary>
           <pre>{reasoning}</pre>
         </details>
