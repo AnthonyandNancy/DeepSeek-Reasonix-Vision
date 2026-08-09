@@ -82,7 +82,7 @@ func TestToolImageProcessorUsesStructuredVisionProgress(t *testing.T) {
 	d := &fakeEvidenceDescriber{evidence: smallEvidence()}
 	events := make([]event.Event, 0, 4)
 	p := NewToolImageProcessor("p/vision", d, event.FuncSink(func(e event.Event) { events = append(events, e) }))
-	p.ProcessToolImages(context.Background(), ToolImageInput{ToolName: "browser", ToolText: "screenshot", Images: []string{"data:image/png;base64,AA=="}})
+	p.ProcessToolImages(context.Background(), ToolImageInput{ToolName: "browser", ToolCallID: "capture-1", ToolText: "screenshot", Images: []string{"data:image/png;base64,AA=="}})
 
 	hasPreparing := false
 	ready := 0
@@ -98,7 +98,7 @@ func TestToolImageProcessorUsesStructuredVisionProgress(t *testing.T) {
 			if analysisID == "" {
 				analysisID = e.VisionProgress.AnalysisID
 			}
-			if e.VisionProgress.AnalysisID != analysisID || e.VisionProgress.Initiator != "tool_media_bridge" || e.VisionProgress.MediaCount != 1 {
+			if e.VisionProgress.AnalysisID != analysisID || e.VisionProgress.Initiator != "tool_media_bridge" || e.VisionProgress.OwnerKind != "tool" || e.VisionProgress.OwnerID != "capture-1" || e.VisionProgress.MediaCount != 1 {
 				t.Fatalf("tool image progress identity = %+v", e.VisionProgress)
 			}
 		}

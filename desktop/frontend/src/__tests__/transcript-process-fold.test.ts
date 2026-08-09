@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
-import type { Item } from "../lib/useController";
+import { initialState, reducer, type Item } from "../lib/useController";
 
 let passed = 0;
 let failed = 0;
@@ -70,6 +70,24 @@ try {
       ),
     );
     return new JSDOM(markup).window.document;
+  }
+
+  let liveVision = reducer(initialState, { type: "user", text: "inspect the image", seq: initialState.seq });
+  liveVision = reducer(liveVision, { type: "event", e: { kind: "turn_started" } });
+  liveVision = reducer(liveVision, { type: "event", e: {
+    kind: "vision_progress",
+    visionProgress: { analysisId: "live-order", initiator: "host_auto", ownerKind: "user", mediaCount: 1, stage: "preparing" },
+  } });
+  liveVision = reducer(liveVision, { type: "event", e: { kind: "reasoning", reasoning: "read visual evidence" } });
+  liveVision = reducer(liveVision, { type: "event", e: { kind: "message", text: "visible answer", reasoning: "read visual evidence" } });
+  for (const mode of ["standard", "compact"] as const) {
+    const doc = render(liveVision.items, { mode });
+    const visual = doc.querySelector(".vision-process");
+    const answer = Array.from(doc.querySelectorAll(".msg--assistant")).find((node) => node.textContent?.includes("visible answer"));
+    const visualBeforeAnswer = Boolean(
+      visual && answer && (visual.compareDocumentPosition(answer) & doc.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING),
+    );
+    ok(visualBeforeAnswer, `${mode} reducer event order renders visual work before the assistant answer`);
   }
 
   const warningTurn: Item[] = [

@@ -19,6 +19,22 @@ type analyzeToolDescriber struct {
 	err         error
 }
 
+type ownerAnalyzeToolDescriber struct {
+	sink event.Sink
+}
+
+func (*ownerAnalyzeToolDescriber) EmitsVisionProgress() bool { return true }
+
+func (d *ownerAnalyzeToolDescriber) DescribeOnce(ctx context.Context, _ string, _ []Image, _ string) (Evidence, *provider.Usage, error) {
+	EmitProgress(ctx, d.sink, event.VisionProgressInfo{Stage: event.VisionStagePreparing})
+	EmitProgress(ctx, d.sink, event.VisionProgressInfo{Stage: event.VisionStageReady})
+	return analyzeToolEvidence(), nil, nil
+}
+
+func (*ownerAnalyzeToolDescriber) DescribeToolImagesOnce(context.Context, string, ToolImageDescribeInput) (Evidence, *provider.Usage, error) {
+	panic("unexpected tool-image analysis")
+}
+
 func (d *analyzeToolDescriber) DescribeOnce(_ context.Context, _ string, images []Image, instruction string) (Evidence, *provider.Usage, error) {
 	d.calls++
 	d.instruction = instruction
@@ -43,7 +59,7 @@ func analyzeToolEvidence() Evidence {
 func TestAnalyzeMediaToolContract(t *testing.T) {
 	got := NewAnalyzeMediaTool("vision/model", &analyzeToolDescriber{evidence: analyzeToolEvidence()}, func(context.Context, MediaSelection) ([]Image, []string, error) {
 		return nil, nil, nil
-	})
+	}, nil)
 	if got.Name() != "analyze_media_with_vision" || !got.ReadOnly() {
 		t.Fatalf("tool contract name=%q readOnly=%v", got.Name(), got.ReadOnly())
 	}
@@ -68,7 +84,7 @@ func TestAnalyzeMediaToolContract(t *testing.T) {
 func TestAnalyzeMediaToolRejectsAllWithImageIndex(t *testing.T) {
 	got := NewAnalyzeMediaTool("vision/model", &analyzeToolDescriber{evidence: analyzeToolEvidence()}, func(context.Context, MediaSelection) ([]Image, []string, error) {
 		return nil, nil, nil
-	})
+	}, nil)
 	if _, err := got.Execute(context.Background(), json.RawMessage(`{"selection":"all","image_index":2}`)); err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
 		t.Fatalf("error = %v, want mutually-exclusive validation", err)
 	}
@@ -91,7 +107,7 @@ func TestAnalyzeMediaToolResolvesSelectionAndReturnsTranscriptMetadata(t *testin
 			got := NewAnalyzeMediaTool("vision/model", d, func(_ context.Context, in MediaSelection) ([]Image, []string, error) {
 				selection = in
 				return []Image{{Ref: "history:1", DataURL: "data:image/png;base64,AA=="}}, []string{".reasonix/attachments/shot.png"}, nil
-			})
+			}, nil)
 			executor, ok := got.(toolpkg.TranscriptMetadataExecutor)
 			if !ok {
 				t.Fatalf("tool does not implement TranscriptMetadataExecutor: %T", got)
@@ -130,7 +146,7 @@ func TestAnalyzeMediaToolReturnsNoMediaErrorWithoutCallingDescriber(t *testing.T
 	d := &analyzeToolDescriber{evidence: analyzeToolEvidence()}
 	got := NewAnalyzeMediaTool("vision/model", d, func(context.Context, MediaSelection) ([]Image, []string, error) {
 		return nil, nil, nil
-	})
+	}, nil)
 	if _, err := got.Execute(context.Background(), json.RawMessage(`{}`)); err == nil || !strings.Contains(err.Error(), "no conversation media") {
 		t.Fatalf("error = %v, want no conversation media", err)
 	}
@@ -139,11 +155,34 @@ func TestAnalyzeMediaToolReturnsNoMediaErrorWithoutCallingDescriber(t *testing.T
 	}
 }
 
+func TestAnalyzeMediaToolProgressCarriesExecutingToolOwner(t *testing.T) {
+	var events []event.Event
+	sink := event.FuncSink(func(e event.Event) { events = append(events, e) })
+	got := NewAnalyzeMediaTool("vision/model", &ownerAnalyzeToolDescriber{sink: sink}, func(context.Context, MediaSelection) ([]Image, []string, error) {
+		return []Image{{DataURL: "data:image/png;base64,AA=="}}, []string{"shot.png"}, nil
+	}, func(context.Context) string { return "call-vision" })
+	executor := got.(toolpkg.TranscriptMetadataExecutor)
+	if _, err := executor.ExecuteWithTranscriptMetadata(context.Background(), json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("ExecuteWithTranscriptMetadata: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("analyze media tool emitted no progress")
+	}
+	for _, emitted := range events {
+		if emitted.Kind != event.VisionProgress || emitted.VisionProgress == nil {
+			continue
+		}
+		if emitted.VisionProgress.OwnerKind != "tool" || emitted.VisionProgress.OwnerID != "call-vision" {
+			t.Fatalf("visual progress owner = %+v", emitted.VisionProgress)
+		}
+	}
+}
+
 func TestAnalyzeMediaToolRevalidatesCustomDescriberEvidence(t *testing.T) {
 	d := &analyzeToolDescriber{evidence: Evidence{Summary: "missing required collections"}}
 	got := NewAnalyzeMediaTool("vision/model", d, func(context.Context, MediaSelection) ([]Image, []string, error) {
 		return []Image{{DataURL: "data:image/png;base64,AA=="}}, nil, nil
-	})
+	}, nil)
 	executor := got.(toolpkg.TranscriptMetadataExecutor)
 	result, err := executor.ExecuteWithTranscriptMetadata(context.Background(), json.RawMessage(`{}`))
 	if err == nil || !strings.Contains(err.Error(), "ModLens") {

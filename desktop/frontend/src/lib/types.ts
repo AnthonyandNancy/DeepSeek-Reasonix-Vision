@@ -43,6 +43,8 @@ export interface WireVisionProgress {
   stage: "preparing" | "connecting" | "waiting" | "response" | "thinking" | "parsing" | "ready" | "failed" | "cancelled" | string;
   analysisId?: string;
   initiator?: string;
+  ownerKind?: "user" | "tool";
+  ownerId?: string;
   attempt?: number;
   mediaCount?: number;
   modelRef?: string;

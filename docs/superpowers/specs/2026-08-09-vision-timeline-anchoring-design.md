@@ -38,11 +38,11 @@ ModLens evidence, model prompts, or MCP routing.
 
 ### Tool invocation identity
 
-The generic `internal/tool` package exposes a context-scoped invocation ID.
-The agent stamps it whenever it executes a tool. The built-in
-`analyze_media_with_vision` tool reads that ID and places it in its visual
-progress scope. The tool-image bridge uses the `ToolImageInput.ToolCallID`
-already supplied by the agent.
+The boot layer injects an invocation-ID resolver into the built-in
+`analyze_media_with_vision` tool. That resolver reads the existing
+`agent.CallContext` without coupling the vision package back to the agent. The
+tool-image bridge uses the `ToolImageInput.ToolCallID` already supplied by the
+agent.
 
 ### Frontend timeline insertion
 
@@ -79,4 +79,3 @@ Tests must drive the reducer with real event order rather than hand-constructing
 an already-correct `Item[]`. Coverage includes first-turn images, no-reasoning
 tool calls, parallel tools, multi-image analysis, retries, cancellation, history
 replay, and DOM order in both transcript display modes.
-

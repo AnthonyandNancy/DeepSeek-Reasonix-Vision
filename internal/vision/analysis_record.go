@@ -30,6 +30,8 @@ type progressScopeKey struct{}
 type ProgressScope struct {
 	AnalysisID string
 	Initiator  string
+	OwnerKind  event.VisionProgressOwnerKind
+	OwnerID    string
 	MediaCount int
 	Observe    func(event.VisionProgressInfo)
 }
@@ -62,6 +64,8 @@ func emitProgressEvent(ctx context.Context, sink event.Sink, info event.VisionPr
 		}
 		info.AnalysisID = scope.config.AnalysisID
 		info.Initiator = scope.config.Initiator
+		info.OwnerKind = scope.config.OwnerKind
+		info.OwnerID = scope.config.OwnerID
 		info.MediaCount = scope.config.MediaCount
 		info.Attempt = scope.attempt
 		observe := scope.config.Observe

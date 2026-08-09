@@ -158,7 +158,8 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 		)
 		analysisCtx := vision.WithProgressScope(ctx, vision.ProgressScope{
 			AnalysisID: analysisID,
-			Initiator:  vision.AnalysisInitiatorHostAuto, MediaCount: len(visionImages), Observe: recorder.Observe,
+			Initiator:  vision.AnalysisInitiatorHostAuto, OwnerKind: event.VisionOwnerUser,
+			MediaCount: len(visionImages), Observe: recorder.Observe,
 		})
 		emitsProgress := vision.DescriberEmitsVisionProgress(c.visionDescriber)
 		for state.VisionAttempts < maxVisionAttemptsPerTurn {

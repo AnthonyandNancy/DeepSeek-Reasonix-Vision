@@ -116,6 +116,8 @@ const (
 
 type VisionProgressStage string
 
+type VisionProgressOwnerKind string
+
 const (
 	VisionStagePreparing  VisionProgressStage = "preparing"
 	VisionStageConnecting VisionProgressStage = "connecting"
@@ -126,6 +128,11 @@ const (
 	VisionStageReady      VisionProgressStage = "ready"
 	VisionStageFailed     VisionProgressStage = "failed"
 	VisionStageCancelled  VisionProgressStage = "cancelled"
+)
+
+const (
+	VisionOwnerUser VisionProgressOwnerKind = "user"
+	VisionOwnerTool VisionProgressOwnerKind = "tool"
 )
 
 // StreamAttemptAction is the lifecycle phase of a local sampling attempt.
@@ -549,6 +556,8 @@ type VisionProgressInfo struct {
 	Stage          VisionProgressStage
 	AnalysisID     string
 	Initiator      string
+	OwnerKind      VisionProgressOwnerKind
+	OwnerID        string
 	Attempt        int
 	MediaCount     int
 	ModelRef       string

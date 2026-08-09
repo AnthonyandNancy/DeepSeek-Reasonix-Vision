@@ -50,6 +50,8 @@ type VisionProgress struct {
 	Stage          string `json:"stage"`
 	AnalysisID     string `json:"analysisId,omitempty"`
 	Initiator      string `json:"initiator,omitempty"`
+	OwnerKind      string `json:"ownerKind,omitempty"`
+	OwnerID        string `json:"ownerId,omitempty"`
 	Attempt        int    `json:"attempt,omitempty"`
 	MediaCount     int    `json:"mediaCount,omitempty"`
 	ModelRef       string `json:"modelRef,omitempty"`
@@ -179,6 +181,7 @@ func ToWire(e event.Event) Event {
 		if p := e.VisionProgress; p != nil {
 			w.VisionProgress = &VisionProgress{
 				Stage: string(p.Stage), AnalysisID: p.AnalysisID, Initiator: p.Initiator,
+				OwnerKind: string(p.OwnerKind), OwnerID: p.OwnerID,
 				Attempt: p.Attempt, MediaCount: p.MediaCount, ModelRef: p.ModelRef,
 				ResponseDelta: p.ResponseDelta, ReasoningDelta: p.ReasoningDelta,
 				Detail: p.Detail, ElapsedMs: p.ElapsedMs,

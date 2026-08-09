@@ -35,16 +35,21 @@ func TestTurnOrchestratorStartsVisibleTurnBeforeVisualEvidence(t *testing.T) {
 
 	started := -1
 	progress := -1
+	var firstProgress *event.VisionProgressInfo
 	for i, e := range events {
 		if e.Kind == event.TurnStarted && started < 0 {
 			started = i
 		}
 		if e.Kind == event.VisionProgress && progress < 0 {
 			progress = i
+			firstProgress = e.VisionProgress
 		}
 	}
 	if started < 0 || progress < 0 || started > progress {
 		t.Fatalf("event order = %+v, want TurnStarted before VisionProgress", events)
+	}
+	if firstProgress == nil || firstProgress.OwnerKind != event.VisionOwnerUser || firstProgress.OwnerID != "" {
+		t.Fatalf("host visual owner = %+v, want active user", firstProgress)
 	}
 }
 

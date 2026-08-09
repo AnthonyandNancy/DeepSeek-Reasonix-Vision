@@ -78,7 +78,9 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 	analysisID := NewAnalysisID()
 	recorder := NewAnalysisRecorder(analysisID, AnalysisInitiatorToolMediaBridge, p.modelRef, refs, len(imgs))
 	analysisCtx := WithProgressScope(ctx, ProgressScope{
-		AnalysisID: analysisID, Initiator: AnalysisInitiatorToolMediaBridge, MediaCount: len(imgs), Observe: recorder.Observe,
+		AnalysisID: analysisID, Initiator: AnalysisInitiatorToolMediaBridge,
+		OwnerKind: event.VisionOwnerTool, OwnerID: strings.TrimSpace(in.ToolCallID),
+		MediaCount: len(imgs), Observe: recorder.Observe,
 	})
 	attempts := 0
 	var lastErr error

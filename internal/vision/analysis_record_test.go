@@ -13,7 +13,7 @@ func TestProgressScopeAssignsIdentityAndAttempts(t *testing.T) {
 	var emitted []event.Event
 	var observed []event.VisionProgressInfo
 	ctx := WithProgressScope(context.Background(), ProgressScope{
-		AnalysisID: "vision-live", Initiator: "host_auto", MediaCount: 2,
+		AnalysisID: "vision-live", Initiator: "tool_media_bridge", OwnerKind: "tool", OwnerID: "capture-1", MediaCount: 2,
 		Observe: func(info event.VisionProgressInfo) { observed = append(observed, info) },
 	})
 	sink := event.FuncSink(func(e event.Event) { emitted = append(emitted, e) })
@@ -27,7 +27,7 @@ func TestProgressScopeAssignsIdentityAndAttempts(t *testing.T) {
 		t.Fatalf("emitted=%d observed=%d, want 4", len(emitted), len(observed))
 	}
 	first := emitted[0].VisionProgress
-	if first == nil || first.AnalysisID != "vision-live" || first.Initiator != "host_auto" || first.MediaCount != 2 || first.Attempt != 1 {
+	if first == nil || first.AnalysisID != "vision-live" || first.Initiator != "tool_media_bridge" || first.OwnerKind != "tool" || first.OwnerID != "capture-1" || first.MediaCount != 2 || first.Attempt != 1 {
 		t.Fatalf("first progress identity = %+v", first)
 	}
 	if observed[1].Attempt != 1 || observed[3].Attempt != 2 {

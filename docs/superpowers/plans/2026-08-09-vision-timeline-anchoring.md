@@ -60,9 +60,7 @@ reducer.
 ### Task 2: Add Visual Owner Metadata
 
 **Files:**
-- Create: `internal/tool/invocation_context.go`
-- Create: `internal/tool/invocation_context_test.go`
-- Modify: `internal/agent/agent.go`
+- Modify: `internal/boot/vision_tools.go`
 - Modify: `internal/event/event.go`
 - Modify: `internal/eventwire/wire.go`
 - Modify: `internal/eventwire/vision_progress_test.go`
@@ -74,33 +72,31 @@ reducer.
 - Modify: `internal/vision/toolimages_test.go`
 
 **Interfaces:**
-- Produces: `tool.WithInvocationID(context.Context, string) context.Context`.
-- Produces: `tool.InvocationID(context.Context) string`.
+- Produces: `vision.InvocationIDResolver func(context.Context) string`.
 - Produces wire fields `ownerKind` and `ownerId` on `visionProgress`.
 
 - [ ] **Step 1: Add failing Go tests**
 
-Assert that invocation identity round-trips through context, progress scope
-copies owner fields to every emitted event, wire JSON carries those fields,
-explicit visual-tool events use the executing tool ID, and tool-image events use
-`ToolImageInput.ToolCallID`.
+Assert that progress scope copies owner fields to every emitted event, wire JSON
+carries those fields, the injected visual-tool owner resolver supplies the
+executing tool ID, and tool-image events use `ToolImageInput.ToolCallID`.
 
 - [ ] **Step 2: Verify RED**
 
 Run:
 
 ```powershell
-go test ./internal/tool ./internal/eventwire ./internal/vision -run 'InvocationID|VisionProgress|AnalyzeMediaTool.*Owner|ToolImageProcessor.*Owner' -count=1
+go test ./internal/eventwire ./internal/vision -run 'VisionProgress|AnalyzeMediaTool.*Owner|ToolImageProcessor.*Owner' -count=1
 ```
 
-Expected: compile failures for the missing context helpers and owner fields.
+Expected: compile failures for the missing resolver and owner fields.
 
-- [ ] **Step 3: Implement invocation context**
+- [ ] **Step 3: Inject invocation identity from boot**
 
-Add a private context key plus trimming helpers in
-`internal/tool/invocation_context.go`. Update `agent.withCallContext` to wrap the
-context with `tool.WithInvocationID(ctx, parentID)` before storing agent-specific
-call state.
+Add `vision.InvocationIDResolver` to the visual tool constructor. In
+`internal/boot/vision_tools.go`, inject a resolver that reads the existing
+`agent.CallContext` parent ID. Keep the vision package independent of the agent
+package.
 
 - [ ] **Step 4: Extend progress and wire contracts**
 
@@ -112,8 +108,8 @@ event alongside analysis ID, initiator, media count, and attempt.
 - [ ] **Step 5: Populate owners at every visual entry point**
 
 - Host image routing uses `OwnerKind: "user"`.
-- `analyze_media_with_vision` uses `OwnerKind: "tool"` and
-  `tool.InvocationID(ctx)`.
+- `analyze_media_with_vision` uses `OwnerKind: "tool"` and the injected owner
+  resolver.
 - Tool-image processing uses `OwnerKind: "tool"` and
   `ToolImageInput.ToolCallID`.
 
@@ -225,7 +221,7 @@ Expected: PASS with no warnings.
 - [ ] **Step 1: Format and static-check**
 
 ```powershell
-gofmt -w internal/tool/invocation_context.go internal/tool/invocation_context_test.go internal/agent/agent.go internal/event/event.go internal/eventwire/wire.go internal/eventwire/vision_progress_test.go internal/vision/analysis_record.go internal/vision/analysis_record_test.go internal/vision/analyze_tool.go internal/vision/analyze_tool_test.go internal/vision/toolimages.go internal/vision/toolimages_test.go internal/control/turn_orchestrator_vision_test.go internal/agent/agent_toolimages_bridge_test.go
+gofmt -w internal/boot/vision_tools.go internal/event/event.go internal/eventwire/wire.go internal/eventwire/vision_progress_test.go internal/vision/analysis_record.go internal/vision/analysis_record_test.go internal/vision/analyze_tool.go internal/vision/analyze_tool_test.go internal/vision/toolimages.go internal/vision/toolimages_test.go internal/control/turn_orchestrator_vision_test.go internal/agent/agent_toolimages_bridge_test.go
 go vet ./...
 go run ./tools/repolint
 pnpm typecheck
@@ -247,4 +243,3 @@ Expected: PASS.
 
 Confirm the patch contains no provider request changes, protocol branches,
 ModLens schema changes, MCP suppression, generated bundles, or unrelated files.
-

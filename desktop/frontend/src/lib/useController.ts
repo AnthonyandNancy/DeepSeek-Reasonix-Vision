@@ -232,7 +232,7 @@ export type Item =
   | { kind: "user"; id: string; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; memoryCitations?: MemoryCitation[] }
   | { kind: "phase"; id: string; text: string }
-  | { kind: "vision"; id: string; analysisId: string; analysis: VisualAnalysisRecord }
+  | { kind: "vision"; id: string; analysisId: string; analysis: VisualAnalysisRecord; ownerKind?: "user" | "tool"; ownerId?: string }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string; title?: string; variant?: "delivery"; action?: "continue_delivery"; decisionReceipt?: WireDecisionReceipt }
   | {
       kind: "compaction";
@@ -438,13 +438,67 @@ interface State {
 const ACTIVE_VISION_STAGES = new Set(["preparing", "connecting", "waiting", "response", "thinking", "parsing"]);
 const TERMINAL_VISION_STAGES = new Set(["ready", "failed", "cancelled"]);
 
+function emptyAssistantPlaceholderIndex(s: State, items: readonly Item[] = s.items): number {
+  const id = s.currentAssistant;
+  if (!id) return -1;
+  const index = items.findIndex((item) => item.kind === "assistant" && item.id === id);
+  if (index < 0) return -1;
+  const item = items[index];
+  if (item.kind !== "assistant" || item.text.trim() || item.reasoning.trim()) return -1;
+  const live = s.live?.id === id ? s.live : undefined;
+  if (live?.text.trim() || live?.reasoning.trim()) return -1;
+  return index;
+}
+
+function insertBeforeEmptyAssistant(s: State, item: Item, items: readonly Item[] = s.items): Item[] {
+  const index = emptyAssistantPlaceholderIndex(s, items);
+  if (index < 0) return [...items, item];
+  return [...items.slice(0, index), item, ...items.slice(index)];
+}
+
+function latestUserItemID(items: readonly Item[]): string | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.kind === "user") return item.id;
+  }
+  return undefined;
+}
+
+function insertVisionAfterOwner(s: State, item: Extract<Item, { kind: "vision" }>, items: readonly Item[] = s.items): Item[] {
+  const ownerKind = item.ownerKind;
+  const ownerId = item.ownerId;
+  if (ownerKind && ownerId) {
+    const ownerIndex = items.findIndex((candidate) => candidate.kind === ownerKind && candidate.id === ownerId);
+    if (ownerIndex >= 0) {
+      let insertAt = ownerIndex + 1;
+      while (insertAt < items.length) {
+        const candidate = items[insertAt];
+        if (candidate.kind !== "vision" || candidate.ownerKind !== ownerKind || candidate.ownerId !== ownerId) break;
+        insertAt += 1;
+      }
+      return [...items.slice(0, insertAt), item, ...items.slice(insertAt)];
+    }
+  }
+  return insertBeforeEmptyAssistant(s, item, items);
+}
+
+function reanchorToolVisionItems(items: readonly Item[], toolId: string): Item[] {
+  const owned = items.filter((item): item is Extract<Item, { kind: "vision" }> => item.kind === "vision" && item.ownerKind === "tool" && item.ownerId === toolId);
+  if (owned.length === 0) return [...items];
+  const without = items.filter((item) => !(item.kind === "vision" && item.ownerKind === "tool" && item.ownerId === toolId));
+  const ownerIndex = without.findIndex((item) => item.kind === "tool" && item.id === toolId);
+  if (ownerIndex < 0) return [...items];
+  return [...without.slice(0, ownerIndex + 1), ...owned, ...without.slice(ownerIndex + 1)];
+}
+
 function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State {
   const analysisId = incoming.analysisId?.trim();
   const stageName = incoming.stage?.trim();
   if (!analysisId || !stageName) return s;
   const index = s.items.findIndex((item) => item.kind === "vision" && item.analysisId === analysisId);
   const previousItem = index >= 0 ? s.items[index] : undefined;
-  const previous = previousItem?.kind === "vision" ? previousItem.analysis : undefined;
+  const previousVisionItem = previousItem?.kind === "vision" ? previousItem : undefined;
+  const previous = previousVisionItem?.analysis;
   const previousStages = asArray(previous?.stages).map((stage) => ({ ...stage }));
   const lastAttempt = previousStages.reduce((attempt, stage) => Math.max(attempt, stage.attempt ?? 1), 0);
   let attempt = typeof incoming.attempt === "number" && incoming.attempt > 0 ? Math.floor(incoming.attempt) : Math.max(1, lastAttempt);
@@ -476,8 +530,20 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     stages: previousStages,
     elapsed_ms: Math.max(previous?.elapsed_ms ?? 0, incoming.elapsedMs ?? 0) || undefined,
   };
-  const item: Item = { kind: "vision", id: previousItem?.id ?? `vision:${analysisId}`, analysisId, analysis };
-  const items = index >= 0 ? s.items.map((current, itemIndex) => itemIndex === index ? item : current) : [...s.items, item];
+  const initiator = incoming.initiator ?? previous?.initiator ?? "";
+  const ownerKind = incoming.ownerKind ?? previousVisionItem?.ownerKind ?? (initiator === "host_auto" ? "user" : undefined);
+  const ownerId = incoming.ownerId?.trim() || previousVisionItem?.ownerId || (ownerKind === "user" ? latestUserItemID(s.items) : undefined);
+  const item: Extract<Item, { kind: "vision" }> = {
+    kind: "vision",
+    id: previousItem?.id ?? `vision:${analysisId}`,
+    analysisId,
+    analysis,
+    ownerKind,
+    ownerId,
+  };
+  const items = index >= 0
+    ? s.items.map((current, itemIndex) => itemIndex === index ? item : current)
+    : insertVisionAfterOwner(s, item);
   return { ...s, items, running: ACTIVE_VISION_STAGES.has(stageName) ? true : s.running };
 }
 
@@ -859,13 +925,13 @@ function copyVisualAnalysis(record: VisualAnalysisRecord): VisualAnalysisRecord 
   };
 }
 
-function appendHistoryVisualAnalyses(items: Item[], records: VisualAnalysisRecord[] | undefined, idPrefix: string, startSeq: number): number {
+function appendHistoryVisualAnalyses(items: Item[], records: VisualAnalysisRecord[] | undefined, idPrefix: string, startSeq: number, ownerKind: "user" | "tool", ownerId: string): number {
   let seq = startSeq;
   for (const source of asArray(records)) {
     const analysis = copyVisualAnalysis(source);
     const analysisId = analysis.id?.trim() || `${idPrefix}vision-${seq}`;
     analysis.id = analysisId;
-    items.push({ kind: "vision", id: `vision:${analysisId}`, analysisId, analysis });
+    items.push({ kind: "vision", id: `vision:${analysisId}`, analysisId, analysis, ownerKind, ownerId });
     seq += 1;
   }
   return seq;
@@ -917,9 +983,10 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
     }
     if (m.role === "user") {
       if (m.content.trim() === "") continue;
-      items.push({ kind: "user", id: `${idPrefix}${seq}`, text: m.content, submitText: m.submitText, createdAt: m.createdAt, checkpointTurn: m.checkpointTurn });
+      const userId = `${idPrefix}${seq}`;
+      items.push({ kind: "user", id: userId, text: m.content, submitText: m.submitText, createdAt: m.createdAt, checkpointTurn: m.checkpointTurn });
       seq++;
-      seq = appendHistoryVisualAnalyses(items, m.visualAnalyses, idPrefix, seq);
+      seq = appendHistoryVisualAnalyses(items, m.visualAnalyses, idPrefix, seq, "user", userId);
       continue;
     }
     if (m.role === "assistant") {
@@ -947,9 +1014,10 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         const output = result?.toolResultArchived ? undefined : result?.content ?? "";
         const error = result?.toolResultError || (output ? historyToolError(output) : undefined);
         const fileDiff = fileDiffFromWire(tc);
+        const toolId = tc.id || `${idPrefix}tool${seq}`;
         items.push({
           kind: "tool",
-          id: tc.id || `${idPrefix}tool${seq}`,
+          id: toolId,
           name: tc.name,
           args: tc.arguments ?? "",
           readOnly: typeof tc.resolvedReadOnly === "boolean" ? tc.resolvedReadOnly : isReadOnlyTool(tc.name),
@@ -966,7 +1034,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           execution: result?.execution,
         });
         seq++;
-        seq = appendHistoryVisualAnalyses(items, result?.visualAnalyses, idPrefix, seq);
+        seq = appendHistoryVisualAnalyses(items, result?.visualAnalyses, idPrefix, seq, "tool", toolId);
       }
       continue;
     }
@@ -974,9 +1042,10 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       if ((m.toolCallId && consumedToolIDs.has(m.toolCallId)) || consumedPositionalToolIndexes.has(messageIndex)) continue;
       const output = m.toolResultArchived ? undefined : m.content;
       const error = m.toolResultError || (output ? historyToolError(output) : undefined);
+      const toolId = m.toolCallId || `${idPrefix}tool${seq}`;
       items.push({
         kind: "tool",
-        id: m.toolCallId || `${idPrefix}tool${seq}`,
+        id: toolId,
         name: m.toolName || "tool",
         args: "",
         readOnly: isReadOnlyTool(m.toolName || "tool"),
@@ -988,7 +1057,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         execution: m.execution,
       });
       seq++;
-      seq = appendHistoryVisualAnalyses(items, m.visualAnalyses, idPrefix, seq);
+      seq = appendHistoryVisualAnalyses(items, m.visualAnalyses, idPrefix, seq, "tool", toolId);
       continue;
     }
   }
@@ -1520,11 +1589,13 @@ function applyEvent(s: State, e: WireEvent): State {
           }
           return { ...s, turnArgChars };
         }
+        const created: ToolItem = { kind: "tool", id, name: t.name, args: "", readOnly: t.readOnly, resolvedName: t.resolvedName, capabilityId: t.capabilityId, status: "running", argChars: t.argChars || undefined, parentId: t.parentId, subagentProgress: SUBAGENT_PROGRESS_TOOLS.has(t.name) ? freshSubagentProgress() : undefined };
+        const inserted = insertBeforeEmptyAssistant(s, created);
         return noteToolInJournal({
           ...s,
           turnArgChars,
           seq: s.seq + 1,
-          items: [...s.items, { kind: "tool", id, name: t.name, args: "", readOnly: t.readOnly, resolvedName: t.resolvedName, capabilityId: t.capabilityId, status: "running", argChars: t.argChars || undefined, parentId: t.parentId, subagentProgress: SUBAGENT_PROGRESS_TOOLS.has(t.name) ? freshSubagentProgress() : undefined }],
+          items: reanchorToolVisionItems(inserted, id),
         }, id, false, undefined, { attemptId: t.attemptId, parentId: t.parentId, partial: true });
       }
       const id = t.id || `tool${s.seq}`;
@@ -1545,7 +1616,7 @@ function applyEvent(s: State, e: WireEvent): State {
       const args = t.args ?? "";
       const fileDiff = fileDiffFromWire(t);
       const created: ToolItem = { kind: "tool", id, name: t.name, args, readOnly: t.readOnly, resolvedName: t.resolvedName, capabilityId: t.capabilityId, status: "running", summary: summarizeFileDiff(fileDiff) || summarize(t.name, args), fileDiff, isShell: t.name === "bash" || id.startsWith("shell-"), execution: t.execution, parentId: t.parentId, profile: t.profile, subagentProgress: SUBAGENT_PROGRESS_TOOLS.has(t.name) ? freshSubagentProgress() : undefined };
-      const items = [...s.items, created];
+      const items = reanchorToolVisionItems(insertBeforeEmptyAssistant(s, created), id);
       // A sub-agent call nested under a task card refreshes that card's
       // recent activity and switches its phase to "tool".
       if (t.parentId) touchSubagentParent(items, t.parentId);

@@ -22,15 +22,17 @@ type MediaSelection struct {
 }
 
 type MediaResolver func(context.Context, MediaSelection) ([]Image, []string, error)
+type InvocationIDResolver func(context.Context) string
 
 type analyzeMediaTool struct {
 	modelRef  string
 	describer Describer
 	resolve   MediaResolver
+	ownerID   InvocationIDResolver
 }
 
-func NewAnalyzeMediaTool(modelRef string, describer Describer, resolve MediaResolver) tool.Tool {
-	return &analyzeMediaTool{modelRef: strings.TrimSpace(modelRef), describer: describer, resolve: resolve}
+func NewAnalyzeMediaTool(modelRef string, describer Describer, resolve MediaResolver, ownerID InvocationIDResolver) tool.Tool {
+	return &analyzeMediaTool{modelRef: strings.TrimSpace(modelRef), describer: describer, resolve: resolve, ownerID: ownerID}
 }
 
 func (*analyzeMediaTool) Name() string { return analyzeMediaToolName }
@@ -79,8 +81,14 @@ func (t *analyzeMediaTool) ExecuteWithTranscriptMetadata(ctx context.Context, ar
 
 	analysisID := NewAnalysisID()
 	recorder := NewAnalysisRecorder(analysisID, AnalysisInitiatorMainModelTool, t.modelRef, refs, len(images))
+	ownerID := ""
+	if t.ownerID != nil {
+		ownerID = strings.TrimSpace(t.ownerID(ctx))
+	}
 	analysisCtx := WithProgressScope(ctx, ProgressScope{
-		AnalysisID: analysisID, Initiator: AnalysisInitiatorMainModelTool, MediaCount: len(images), Observe: recorder.Observe,
+		AnalysisID: analysisID, Initiator: AnalysisInitiatorMainModelTool,
+		OwnerKind: event.VisionOwnerTool, OwnerID: ownerID,
+		MediaCount: len(images), Observe: recorder.Observe,
 	})
 	emitsProgress := DescriberEmitsVisionProgress(t.describer)
 	if !emitsProgress {
