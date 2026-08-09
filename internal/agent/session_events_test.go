@@ -785,6 +785,51 @@ func TestSessionEventLogPreservesUserCreatedAt(t *testing.T) {
 	}
 }
 
+func TestSessionEventLogPreservesVisualAnalysisMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	want := provider.VisualAnalysisRecord{
+		ID:         "vision-1",
+		Initiator:  "host_auto",
+		ModelRef:   "agnes-ai/agnes-2.0-flash",
+		Status:     "ready",
+		MediaRefs:  []string{"@attachments/shot.png"},
+		MediaCount: 1,
+		Stages: []provider.VisualAnalysisStage{{
+			Attempt: 1, Stage: "response", Response: `{"summary":"settings"}`, ElapsedMs: 120,
+		}},
+		Summary:     "settings dialog",
+		OCRText:     "Save",
+		Evidence:    `<visual-evidence schema="modlens-v2">settings</visual-evidence>`,
+		StartedAt:   1_718_000_000_000,
+		CompletedAt: 1_718_000_000_250,
+		ElapsedMs:   250,
+	}
+	s := NewSession("sys")
+	s.Add(provider.Message{
+		Role: provider.RoleUser, Content: "inspect the image",
+		VisualAnalyses: []provider.VisualAnalysisRecord{want},
+	})
+	if err := s.SaveSnapshot(path); err != nil {
+		t.Fatalf("SaveSnapshot: %v", err)
+	}
+
+	loaded, err := LoadSession(path)
+	if err != nil {
+		t.Fatalf("LoadSession: %v", err)
+	}
+	msgs := loaded.Snapshot()
+	if len(msgs) != 2 || len(msgs[1].VisualAnalyses) != 1 {
+		t.Fatalf("loaded messages lost visual metadata: %+v", msgs)
+	}
+	got := msgs[1].VisualAnalyses[0]
+	if got.ID != want.ID || got.Initiator != want.Initiator || got.ModelRef != want.ModelRef || got.Summary != want.Summary || got.OCRText != want.OCRText || got.Evidence != want.Evidence {
+		t.Fatalf("visual analysis metadata changed after replay: got=%+v want=%+v", got, want)
+	}
+	if len(got.Stages) != 1 || got.Stages[0].Response != want.Stages[0].Response || len(got.MediaRefs) != 1 || got.MediaRefs[0] != want.MediaRefs[0] {
+		t.Fatalf("visual analysis collections changed after replay: got=%+v want=%+v", got, want)
+	}
+}
+
 func TestSessionDigestIgnoresUserCreatedAt(t *testing.T) {
 	withoutTime := []provider.Message{
 		{Role: provider.RoleSystem, Content: "sys"},

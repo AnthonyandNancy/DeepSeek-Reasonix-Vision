@@ -59,8 +59,9 @@ type Message struct {
 	// putting paths into provider requests; ModelMessages strips it at the wire
 	// boundary. Older sessions simply leave it empty and use legacy text/display
 	// recovery instead.
-	MediaRefs        []string `json:"media_refs,omitempty"`
-	ReasoningContent string   `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
+	MediaRefs        []string               `json:"media_refs,omitempty"`
+	VisualAnalyses   []VisualAnalysisRecord `json:"visual_analyses,omitempty"`
+	ReasoningContent string                 `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
 	// ReasoningID is the provider-issued identifier of the reasoning item
 	// (OpenAI Responses schema: Reasoning.id is required on input items).
 	// Captured from the streamed output item and round-tripped back into
@@ -275,7 +276,7 @@ func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(ms
 func ModelMessages(msgs []Message) []Message {
 	needsCopy := false
 	for _, m := range msgs {
-		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || len(m.MediaRefs) > 0 || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
+		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || len(m.MediaRefs) > 0 || len(m.VisualAnalyses) > 0 || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
 			needsCopy = true
 			break
 		}
@@ -294,6 +295,7 @@ func ModelMessages(msgs []Message) []Message {
 		}
 		candidate.RawContent = ""
 		candidate.MediaRefs = nil
+		candidate.VisualAnalyses = nil
 		candidate.DecisionReceipt = nil
 		candidate.DecisionReceipts = nil
 		// Local shell metadata must never enter provider request bytes.

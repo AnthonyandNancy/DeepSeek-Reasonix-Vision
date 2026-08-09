@@ -7,6 +7,32 @@ import (
 	"testing"
 )
 
+func TestModelMessagesStripsVisualAnalysisMetadata(t *testing.T) {
+	in := []Message{{
+		Role:    RoleUser,
+		Content: "provider-visible ModLens evidence",
+		VisualAnalyses: []VisualAnalysisRecord{{
+			ID:        "vision-1",
+			Initiator: "host_auto",
+			Summary:   "settings dialog",
+		}},
+	}}
+
+	got := ModelMessages(in)
+	if len(got) != 1 {
+		t.Fatalf("ModelMessages length = %d, want 1", len(got))
+	}
+	if len(got[0].VisualAnalyses) != 0 {
+		t.Fatalf("provider request leaked visual analysis metadata: %+v", got[0].VisualAnalyses)
+	}
+	if got[0].Content != in[0].Content {
+		t.Fatalf("provider-visible evidence changed: %q", got[0].Content)
+	}
+	if len(in[0].VisualAnalyses) != 1 {
+		t.Fatal("ModelMessages mutated the stored transcript message")
+	}
+}
+
 // --- SanitizeToolPairing ---
 
 // toolIDsAnswered reports whether every assistant tool_call id has a following
