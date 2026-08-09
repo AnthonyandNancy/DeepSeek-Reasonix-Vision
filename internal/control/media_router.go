@@ -150,7 +150,8 @@ func selectHistoricalVisionMedia(groups [][]ResolvedImage, selection vision.Medi
 		}
 		return []ResolvedImage{all[selection.Index]}
 	}
-	return groups[len(groups)-1]
+	latest := groups[len(groups)-1]
+	return []ResolvedImage{latest[len(latest)-1]}
 }
 
 func visionReanalysisRequested(input string) bool {

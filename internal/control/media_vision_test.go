@@ -29,6 +29,21 @@ func TestHistoricalVisionMediaResolvesLatestStoredConversationImage(t *testing.T
 	}
 }
 
+func TestHistoricalVisionMediaLatestSelectsLastImageFromMultiImageTurn(t *testing.T) {
+	sess := agent.NewSession("system")
+	sess.Add(provider.Message{Role: provider.RoleUser, Images: []string{
+		"data:image/png;base64,older",
+		"data:image/png;base64,newest",
+	}})
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, ModelRef: "text/main", VisionModelRef: "vision/vl"})
+
+	images, refs, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: -1})
+	if err != nil || len(images) != 1 || images[0].DataURL != "data:image/png;base64,newest" || len(refs) != 1 {
+		t.Fatalf("images=%+v refs=%v err=%v, want final image from latest turn", images, refs, err)
+	}
+}
+
 func TestReanalysisResolvesNamedHistoricalAttachmentPath(t *testing.T) {
 	workspace := t.TempDir()
 	writeImageRouteConfig(t, workspace)
