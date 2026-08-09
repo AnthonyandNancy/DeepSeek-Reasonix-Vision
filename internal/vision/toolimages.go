@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"reasonix/internal/event"
+	"reasonix/internal/provider"
 )
 
 const MaxToolImageAttempts = 3
@@ -26,11 +27,12 @@ type ToolImageInput struct {
 }
 
 type ToolImageOutput struct {
-	Text     string
-	Images   []string
-	Success  bool
-	Attempts int
-	Debug    string
+	Text           string
+	Images         []string
+	Success        bool
+	Attempts       int
+	Debug          string
+	VisualAnalyses []provider.VisualAnalysisRecord
 }
 type ToolImageProcessor interface {
 	ProcessToolImages(context.Context, ToolImageInput) ToolImageOutput
@@ -64,22 +66,34 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 			return ToolImageOutput{Text: in.ToolText, Images: in.Images}
 		}
 		if p != nil {
-			p.emitProgress(event.VisionStageFailed, "model_unavailable")
+			p.emitProgress(ctx, event.VisionStageFailed, "model_unavailable")
 		}
 		return ToolImageOutput{Text: AppendToolImageStatusWithin(in.ToolText, toolName, maxText), Images: nil, Debug: "no vision evidence model configured"}
 	}
 	imgs := toToolVisionImages(in.Images, toolName)
+	refs := make([]string, 0, len(imgs))
+	for _, image := range imgs {
+		refs = append(refs, image.Ref)
+	}
+	analysisID := NewAnalysisID()
+	recorder := NewAnalysisRecorder(analysisID, AnalysisInitiatorToolMediaBridge, p.modelRef, refs, len(imgs))
+	analysisCtx := WithProgressScope(ctx, ProgressScope{
+		AnalysisID: analysisID, Initiator: AnalysisInitiatorToolMediaBridge, MediaCount: len(imgs), Observe: recorder.Observe,
+	})
 	attempts := 0
 	var lastErr error
 	for attempts < p.maxAttempts {
 		attempts++
-		p.emitProgress(event.VisionStagePreparing, "")
-		ev, _, err := p.describer.DescribeToolImagesOnce(ctx, p.modelRef, ToolImageDescribeInput{ToolName: toolName, ToolText: truncateToolContext(in.ToolText, maxToolContextBytes), TaskContext: truncateToolContext(in.TaskContext, maxToolContextBytes), Images: imgs})
+		p.emitProgress(analysisCtx, event.VisionStagePreparing, "")
+		ev, _, err := p.describer.DescribeToolImagesOnce(analysisCtx, p.modelRef, ToolImageDescribeInput{ToolName: toolName, ToolText: truncateToolContext(in.ToolText, maxToolContextBytes), TaskContext: truncateToolContext(in.TaskContext, maxToolContextBytes), Images: imgs})
 		if err == nil {
 			evidence := RenderEvidenceContextWithin(ev, "tool:"+toolName, maxToolEvidenceBytes)
 			final := appendBoundedToolBlock(in.ToolText, "\n\n", evidence, "\n", maxText)
-			p.emitProgress(event.VisionStageReady, "")
-			return ToolImageOutput{Text: final, Images: nil, Success: true, Attempts: attempts, Debug: evidence}
+			p.emitProgress(analysisCtx, event.VisionStageReady, "")
+			return ToolImageOutput{
+				Text: final, Images: nil, Success: true, Attempts: attempts, Debug: evidence,
+				VisualAnalyses: []provider.VisualAnalysisRecord{recorder.Snapshot(ev, evidence)},
+			}
 		}
 		lastErr = err
 		if ctx.Err() != nil {
@@ -94,8 +108,12 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 	if errors.Is(ctx.Err(), context.Canceled) || (errors.Is(lastErr, context.Canceled) && !errors.Is(lastErr, context.DeadlineExceeded)) {
 		stage = event.VisionStageCancelled
 	}
-	p.emitProgress(stage, detail)
-	return ToolImageOutput{Text: AppendToolImageStatusWithin(in.ToolText, toolName, maxText), Images: nil, Attempts: attempts, Debug: fmt.Sprintf("vision evidence failed after %d attempt(s)", attempts)}
+	p.emitProgress(analysisCtx, stage, detail)
+	return ToolImageOutput{
+		Text: AppendToolImageStatusWithin(in.ToolText, toolName, maxText), Images: nil, Attempts: attempts,
+		Debug:          fmt.Sprintf("vision evidence failed after %d attempt(s)", attempts),
+		VisualAnalyses: []provider.VisualAnalysisRecord{recorder.Snapshot(Evidence{}, "")},
+	}
 }
 
 func AppendToolImageStatus(text, toolName string) string {
@@ -190,10 +208,8 @@ func truncateToolContext(text string, maxBytes int) string {
 	return text[:cut] + "\n……[content truncated]……"
 }
 
-func (p *ProviderToolImageProcessor) emitProgress(stage event.VisionProgressStage, detail string) {
-	if p != nil && p.sink != nil {
-		p.sink.Emit(event.Event{Kind: event.VisionProgress, ModelRef: p.modelRef, Source: event.UsageSourceVision, VisionProgress: &event.VisionProgressInfo{
-			Stage: stage, ModelRef: p.modelRef, Detail: detail,
-		}})
+func (p *ProviderToolImageProcessor) emitProgress(ctx context.Context, stage event.VisionProgressStage, detail string) {
+	if p != nil {
+		EmitProgress(ctx, p.sink, event.VisionProgressInfo{Stage: stage, ModelRef: p.modelRef, Detail: detail})
 	}
 }

@@ -51,6 +51,15 @@ func bridgeToolMessageLocalImages(s *Session, name string) []string {
 	return nil
 }
 
+func bridgeToolMessageVisualAnalyses(s *Session, name string) []provider.VisualAnalysisRecord {
+	for i := range s.Messages {
+		if s.Messages[i].Role == provider.RoleTool && s.Messages[i].Name == name {
+			return s.Messages[i].VisualAnalyses
+		}
+	}
+	return nil
+}
+
 func TestAgentToolImagesTextModelStoresVisualEvidenceNotRawImage(t *testing.T) {
 	fp := &recordingToolImageProcessor{out: vision.ToolImageOutput{
 		Text:    "read shot.png\n\n<visual-evidence schema=\"modlens-v2\">\nDIRECT_EVIDENCE:\nOCR: 错误码 500\n</visual-evidence>",
@@ -112,6 +121,35 @@ func TestAgentToolImagesVisionModelStillUsesConfiguredVisualProcessor(t *testing
 	}
 	if content := lastToolResult(sess, "shot"); content != "visual evidence" {
 		t.Fatalf("tool message content = %q, want visual evidence", content)
+	}
+}
+
+func TestAgentToolImagesPersistsVisualAnalysisOnToolResult(t *testing.T) {
+	record := provider.VisualAnalysisRecord{
+		ID:        "vision-tool-1",
+		Initiator: vision.AnalysisInitiatorToolMediaBridge,
+		Status:    string(event.VisionStageReady),
+		Summary:   "screenshot evidence",
+	}
+	fp := &recordingToolImageProcessor{out: vision.ToolImageOutput{
+		Text:           "visual evidence",
+		Success:        true,
+		VisualAnalyses: []provider.VisualAnalysisRecord{record},
+	}}
+	reg := tool.NewRegistry()
+	reg.Add(&fakeImageTool{text: "shot", images: []string{bridgeShotDataURL}})
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{toolCallChunk("c1", "shot", `{}`), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
+	}}
+	sess := NewSession("sys")
+	a := New(prov, reg, sess, Options{ToolImages: fp}, event.Discard)
+	if err := a.Run(context.Background(), "look"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	analyses := bridgeToolMessageVisualAnalyses(sess, "shot")
+	if len(analyses) != 1 || analyses[0].ID != record.ID || analyses[0].Initiator != record.Initiator {
+		t.Fatalf("tool visual analyses = %+v, want persisted record %+v", analyses, record)
 	}
 }
 

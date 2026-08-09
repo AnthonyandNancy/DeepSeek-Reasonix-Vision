@@ -10,12 +10,13 @@ import (
 
 const toolImageTaskContextLimit = 2 * 1024
 
-func (a *Agent) processToolImages(ctx context.Context, calls []provider.ToolCall, results []string, images [][]string) ([]string, [][]string) {
+func (a *Agent) processToolImages(ctx context.Context, calls []provider.ToolCall, results []string, images [][]string) ([]string, [][]string, [][]provider.VisualAnalysisRecord) {
 	if a.toolImages == nil {
-		return results, images
+		return results, images, nil
 	}
 	results = append([]string(nil), results...)
 	images = append([][]string(nil), images...)
+	analyses := make([][]provider.VisualAnalysisRecord, len(calls))
 	taskContext := a.currentTaskContext()
 	for i := range calls {
 		if len(images[i]) == 0 {
@@ -27,8 +28,9 @@ func (a *Agent) processToolImages(ctx context.Context, calls []provider.ToolCall
 			TaskContext: taskContext, MaxTextBytes: maxToolOutputBytes,
 		})
 		results[i], images[i] = out.Text, out.Images
+		analyses[i] = cloneVisualAnalyses(out.VisualAnalyses)
 	}
-	return results, images
+	return results, images, analyses
 }
 
 func (a *Agent) currentTaskContext() string {

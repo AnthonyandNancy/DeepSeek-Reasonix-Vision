@@ -302,7 +302,7 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	}
 	a.session.Add(provider.Message{
 		Role: provider.RoleUser, Content: input, RawContent: rawContent,
-		Images: userImages(ctx), MediaRefs: userMediaRefs(ctx), CreatedAt: userCreatedAt,
+		Images: userImages(ctx), MediaRefs: userMediaRefs(ctx), VisualAnalyses: userVisualAnalyses(ctx), CreatedAt: userCreatedAt,
 	})
 
 	state = &runLoopState{
@@ -1002,8 +1002,9 @@ func (a *Agent) handleToolRound(ctx context.Context, state *runLoopState, step i
 	}
 	batch := a.executeBatch(ctx, calls)
 	results, images := batch.results, batch.images
+	var visualAnalyses [][]provider.VisualAnalysisRecord
 	if a.toolImages != nil {
-		results, images = a.processToolImages(ctx, calls, results, images)
+		results, images, visualAnalyses = a.processToolImages(ctx, calls, results, images)
 	}
 	var localMedia []provider.Message
 	for i, call := range calls {
@@ -1013,6 +1014,9 @@ func (a *Agent) handleToolRound(ctx context.Context, state *runLoopState, step i
 			Images:     images[i],
 			ToolCallID: call.ID,
 			Name:       call.Name,
+		}
+		if i < len(visualAnalyses) {
+			msg.VisualAnalyses = visualAnalyses[i]
 		}
 		if i < len(batch.executions) {
 			msg.ToolExecution = toProviderToolExecution(batch.executions[i])

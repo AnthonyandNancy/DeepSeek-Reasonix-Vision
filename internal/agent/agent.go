@@ -92,6 +92,7 @@ type parentSessionContextKey struct{}
 type subagentDepthContextKey struct{}
 type userImagesContextKey struct{}
 type userMediaRefsContextKey struct{}
+type userVisualAnalysesContextKey struct{}
 type directImageTurnContextKey struct{}
 
 // callContext is the per-call context a tool can read. parentID is the call being
@@ -210,11 +211,21 @@ func WithUserMediaRefs(ctx context.Context, refs []string) context.Context {
 	return context.WithValue(ctx, userMediaRefsContextKey{}, out)
 }
 
+// WithUserVisualAnalyses carries provider-excluded visual records for the user
+// message that will be persisted at the start of this run.
+func WithUserVisualAnalyses(ctx context.Context, analyses []provider.VisualAnalysisRecord) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, userVisualAnalysesContextKey{}, cloneVisualAnalyses(analyses))
+}
+
 // WithoutUserImages prevents child agents from inheriting raw images or the
 // root turn's direct-image routing marker.
 func WithoutUserImages(ctx context.Context) context.Context {
 	ctx = WithUserImages(ctx, nil)
 	ctx = WithUserMediaRefs(ctx, nil)
+	ctx = WithUserVisualAnalyses(ctx, nil)
 	return WithDirectImageTurn(ctx, false)
 }
 
@@ -226,6 +237,23 @@ func userImages(ctx context.Context) []string {
 func userMediaRefs(ctx context.Context) []string {
 	refs, _ := ctx.Value(userMediaRefsContextKey{}).([]string)
 	return refs
+}
+
+func userVisualAnalyses(ctx context.Context) []provider.VisualAnalysisRecord {
+	analyses, _ := ctx.Value(userVisualAnalysesContextKey{}).([]provider.VisualAnalysisRecord)
+	return cloneVisualAnalyses(analyses)
+}
+
+func cloneVisualAnalyses(in []provider.VisualAnalysisRecord) []provider.VisualAnalysisRecord {
+	if len(in) == 0 {
+		return nil
+	}
+	out := append([]provider.VisualAnalysisRecord(nil), in...)
+	for i := range out {
+		out[i].MediaRefs = append([]string(nil), in[i].MediaRefs...)
+		out[i].Stages = append([]provider.VisualAnalysisStage(nil), in[i].Stages...)
+	}
+	return out
 }
 
 // WithDirectImageTurn marks a turn whose raw images are being sent to the

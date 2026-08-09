@@ -12,14 +12,15 @@ func TestToWireVisionProgressCarriesBoundedLifecycleFields(t *testing.T) {
 	w := ToWire(event.Event{
 		Kind: event.VisionProgress,
 		VisionProgress: &event.VisionProgressInfo{
-			Stage: event.VisionStageResponse, ModelRef: "vision/model", ResponseDelta: "partial JSON", ElapsedMs: 125,
+			Stage: event.VisionStageResponse, AnalysisID: "vision-1", Initiator: "main_model_tool",
+			Attempt: 2, MediaCount: 3, ModelRef: "vision/model", ResponseDelta: "partial JSON", ElapsedMs: 125,
 		},
 	})
 	b, err := json.Marshal(w)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	for _, want := range []string{`"kind":"vision_progress"`, `"stage":"response"`, `"modelRef":"vision/model"`, `"responseDelta":"partial JSON"`, `"elapsedMs":125`} {
+	for _, want := range []string{`"kind":"vision_progress"`, `"stage":"response"`, `"analysisId":"vision-1"`, `"initiator":"main_model_tool"`, `"attempt":2`, `"mediaCount":3`, `"modelRef":"vision/model"`, `"responseDelta":"partial JSON"`, `"elapsedMs":125`} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("vision progress JSON = %s, missing %s", b, want)
 		}

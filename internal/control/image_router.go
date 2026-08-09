@@ -54,11 +54,12 @@ const (
 )
 
 type ImageRouteResult struct {
-	Mode        ImageRouteMode
-	Input       string
-	Images      []string
-	Notice      string
-	VisionUsage *provider.Usage
+	Mode           ImageRouteMode
+	Input          string
+	Images         []string
+	Notice         string
+	VisionUsage    *provider.Usage
+	VisualAnalyses []provider.VisualAnalysisRecord
 }
 type ImageRouteState struct {
 	Resolved                 bool
@@ -142,26 +143,47 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 	status := c.resolveVisionModelStatus()
 	if status.Kind == VisionModelSupported && c.visionDescriber != nil {
 		visionImages := toVisionImages(images)
+		analysisID := vision.NewAnalysisID()
+		recorder := vision.NewAnalysisRecorder(
+			analysisID, vision.AnalysisInitiatorHostAuto, status.ModelRef,
+			mediaRefsForResolvedImages(images), len(visionImages),
+		)
+		analysisCtx := vision.WithProgressScope(ctx, vision.ProgressScope{
+			AnalysisID: analysisID,
+			Initiator:  vision.AnalysisInitiatorHostAuto, MediaCount: len(visionImages), Observe: recorder.Observe,
+		})
 		for state.VisionAttempts < maxVisionAttemptsPerTurn {
 			state.VisionAttempts++
-			c.emitVisionRouteProgress(status.ModelRef)
-			ev, usage, err := c.visionDescriber.DescribeOnce(ctx, status.ModelRef, visionImages, rawQuestion)
+			c.emitVisionRouteProgress(analysisCtx, status.ModelRef)
+			ev, usage, err := c.visionDescriber.DescribeOnce(analysisCtx, status.ModelRef, visionImages, rawQuestion)
 			if err == nil {
+				vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: event.VisionStageReady, ModelRef: status.ModelRef})
 				state.Resolved = true
 				evidence := vision.RenderEvidenceContextWithin(ev, "user-attachment", maxUserVisionEvidenceBytes)
 				final := joinVisualEvidenceInput(stripResolvedUserImageContext(input, images), evidence)
-				return ImageRouteResult{Mode: ImageRouteVisionEvidence, Input: final, Images: nil, VisionUsage: usage}
+				return ImageRouteResult{
+					Mode: ImageRouteVisionEvidence, Input: final, Images: nil, VisionUsage: usage,
+					VisualAnalyses: []provider.VisualAnalysisRecord{recorder.Snapshot(ev, evidence)},
+				}
 			}
+			stage := event.VisionStageFailed
+			if ctx.Err() != nil {
+				stage = event.VisionStageCancelled
+			}
+			vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: stage, ModelRef: status.ModelRef, Detail: "request_failed"})
 			if ctx.Err() != nil {
 				break
 			}
 		}
+		analysis := []provider.VisualAnalysisRecord{recorder.Snapshot(vision.Evidence{}, "")}
 		if ctx.Err() != nil || state.VisionAttempts >= maxVisionAttemptsPerTurn {
 			state.Resolved = true
 			if c.mainModelSupportsVision() && !state.RequireIndependentVision {
-				return ImageRouteResult{Mode: ImageRouteDirectMain, Input: input, Images: imageDataURLs(images), Notice: "visual evidence extraction failed; using the vision-capable main model"}
+				return ImageRouteResult{Mode: ImageRouteDirectMain, Input: input, Images: imageDataURLs(images), Notice: "visual evidence extraction failed; using the vision-capable main model", VisualAnalyses: analysis}
 			}
-			return pathOnlyResult(input, images, fmt.Sprintf("visual evidence extraction failed after %d attempt(s)", state.VisionAttempts))
+			result := pathOnlyResult(input, images, fmt.Sprintf("visual evidence extraction failed after %d attempt(s)", state.VisionAttempts))
+			result.VisualAnalyses = analysis
+			return result
 		}
 	}
 	if c.mainModelSupportsVision() && !state.RequireIndependentVision {
@@ -222,13 +244,11 @@ func stripResolvedUserImageContext(input string, images []ResolvedImage) string 
 	return strings.TrimSpace(cleaned)
 }
 
-func (c *Controller) emitVisionRouteProgress(modelRef string) {
-	if c == nil || c.sink == nil {
+func (c *Controller) emitVisionRouteProgress(ctx context.Context, modelRef string) {
+	if c == nil {
 		return
 	}
-	c.sink.Emit(event.Event{Kind: event.VisionProgress, ModelRef: modelRef, Source: event.UsageSourceVision, VisionProgress: &event.VisionProgressInfo{
-		Stage: event.VisionStagePreparing, ModelRef: modelRef,
-	}})
+	vision.EmitProgress(ctx, c.sink, event.VisionProgressInfo{Stage: event.VisionStagePreparing, ModelRef: modelRef})
 }
 func pathOnlyResult(input string, images []ResolvedImage, notice string) ImageRouteResult {
 	return ImageRouteResult{Mode: ImageRoutePathOnly, Input: injectImageUnavailableContext(input, images, notice), Notice: notice}

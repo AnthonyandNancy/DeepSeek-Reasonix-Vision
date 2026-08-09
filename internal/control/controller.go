@@ -2018,6 +2018,7 @@ func (c *Controller) Run(ctx context.Context, input string) (err error) {
 	route := c.routeResolvedMediaOnce(ctx, &ImageRouteState{}, input, rawInput, media)
 	ctx = agent.WithUserImages(ctx, route.Images)
 	ctx = agent.WithUserMediaRefs(ctx, mediaRefsForResolvedImages(media.Images))
+	ctx = agent.WithUserVisualAnalyses(ctx, route.VisualAnalyses)
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
 	input = route.Input
 	if route.Notice != "" {
@@ -2069,6 +2070,7 @@ func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, 
 	route := c.routeResolvedMediaOnce(ctx, &ImageRouteState{}, task, task, media)
 	ctx = agent.WithUserImages(ctx, route.Images)
 	ctx = agent.WithUserMediaRefs(ctx, mediaRefsForResolvedImages(media.Images))
+	ctx = agent.WithUserVisualAnalyses(ctx, route.VisualAnalyses)
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
 	if route.Notice != "" {
 		c.emitImageRouteNotice(route.Notice)

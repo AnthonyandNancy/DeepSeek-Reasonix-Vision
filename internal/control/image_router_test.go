@@ -72,6 +72,19 @@ func TestRouteImagesUsesModLensEvidenceForTextMainModel(t *testing.T) {
 			t.Fatalf("missing %q: %s", want, res.Input)
 		}
 	}
+	if len(res.VisualAnalyses) != 1 {
+		t.Fatalf("visual analyses = %+v, want one durable record", res.VisualAnalyses)
+	}
+	record := res.VisualAnalyses[0]
+	if record.ID == "" || record.Initiator != "host_auto" || record.ModelRef != "vision/vl" || record.Status != "ready" {
+		t.Fatalf("visual analysis identity/status = %+v", record)
+	}
+	if record.Summary != "dialog clipped" || record.OCRText != "Save" || !strings.Contains(record.Evidence, "modlens-v2") {
+		t.Fatalf("visual analysis evidence = %+v", record)
+	}
+	if record.MediaCount != 1 || len(record.MediaRefs) != 1 || record.MediaRefs[0] != "shot.png" {
+		t.Fatalf("visual analysis media = %+v", record)
+	}
 }
 
 func TestRouteImagesPassesAllUserImagesToVisionAndRemovesRawRefsFromMainInput(t *testing.T) {

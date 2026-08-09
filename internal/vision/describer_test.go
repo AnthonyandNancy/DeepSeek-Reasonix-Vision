@@ -166,7 +166,12 @@ func TestProviderDescriberEmitsVisionLifecycleAndSafeDeltas(t *testing.T) {
 	var events []event.Event
 	sink := event.FuncSink(func(e event.Event) { events = append(events, e) })
 	d := NewProviderDescriber(p, nil, sink)
-	if _, _, err := d.DescribeOnce(context.Background(), "p/vision", []Image{{DataURL: "data:image/png;base64,AA=="}}, ""); err != nil {
+	recorder := NewAnalysisRecorder("vision-describer", "host_auto", "p/vision", []string{"@shot.png"}, 1)
+	ctx := WithProgressScope(context.Background(), ProgressScope{
+		AnalysisID: "vision-describer", Initiator: "host_auto", MediaCount: 1, Observe: recorder.Observe,
+	})
+	evidence, _, err := d.DescribeOnce(ctx, "p/vision", []Image{{DataURL: "data:image/png;base64,AA=="}}, "")
+	if err != nil {
 		t.Fatalf("DescribeOnce: %v", err)
 	}
 	var stages []event.VisionProgressStage
@@ -176,6 +181,9 @@ func TestProviderDescriberEmitsVisionLifecycleAndSafeDeltas(t *testing.T) {
 			continue
 		}
 		stages = append(stages, e.VisionProgress.Stage)
+		if e.VisionProgress.AnalysisID != "vision-describer" || e.VisionProgress.Initiator != "host_auto" || e.VisionProgress.Attempt != 1 || e.VisionProgress.MediaCount != 1 {
+			t.Fatalf("vision progress missing scoped identity: %+v", e.VisionProgress)
+		}
 		response += e.VisionProgress.ResponseDelta
 		reasoning += e.VisionProgress.ReasoningDelta
 	}
@@ -184,5 +192,8 @@ func TestProviderDescriberEmitsVisionLifecycleAndSafeDeltas(t *testing.T) {
 	}
 	if response != validEvidenceJSON() || reasoning != "checking pixels" {
 		t.Fatalf("response=%q reasoning=%q", response, reasoning)
+	}
+	if got := recorder.Snapshot(evidence, "rendered"); got.Status != "ready" || len(got.Stages) < 5 || got.Summary != "UI screenshot" {
+		t.Fatalf("recorded describer lifecycle = %+v", got)
 	}
 }

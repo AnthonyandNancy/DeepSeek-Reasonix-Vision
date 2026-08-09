@@ -144,6 +144,7 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 	route := c.routeResolvedMediaOnce(ctx, &ImageRouteState{}, input, raw, media)
 	ctx = agent.WithUserImages(ctx, route.Images)
 	ctx = agent.WithUserMediaRefs(ctx, mediaRefsForResolvedImages(media.Images))
+	ctx = agent.WithUserVisualAnalyses(ctx, route.VisualAnalyses)
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
 	input = route.Input
 	if route.Notice != "" {
@@ -158,7 +159,7 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 	if c.executor == nil {
 		return fmt.Errorf("subagent slash invocation requires an active session")
 	}
-	c.executor.Session().Add(provider.Message{Role: provider.RoleUser, Content: input, RawContent: raw, Images: route.Images, MediaRefs: mediaRefsForResolvedImages(media.Images), CreatedAt: time.Now().UnixMilli()})
+	c.executor.Session().Add(provider.Message{Role: provider.RoleUser, Content: input, RawContent: raw, Images: route.Images, MediaRefs: mediaRefsForResolvedImages(media.Images), VisualAnalyses: route.VisualAnalyses, CreatedAt: time.Now().UnixMilli()})
 
 	for _, sk := range skills {
 		sk = c.skills.prepare(sk)
@@ -277,6 +278,7 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	route := c.routeResolvedMediaOnce(ctx, &ImageRouteState{}, input, turn.raw, media)
 	ctx = agent.WithUserImages(ctx, route.Images)
 	ctx = agent.WithUserMediaRefs(ctx, mediaRefsForResolvedImages(media.Images))
+	ctx = agent.WithUserVisualAnalyses(ctx, route.VisualAnalyses)
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
 	input = route.Input
 	if route.Notice != "" {

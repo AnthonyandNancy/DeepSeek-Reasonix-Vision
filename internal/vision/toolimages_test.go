@@ -50,6 +50,13 @@ func TestToolImageProcessorInjectsModLensEvidenceForTextModel(t *testing.T) {
 			t.Fatalf("missing %q in %s", want, out.Text)
 		}
 	}
+	if len(out.VisualAnalyses) != 1 {
+		t.Fatalf("visual analyses = %+v, want one tool-media record", out.VisualAnalyses)
+	}
+	record := out.VisualAnalyses[0]
+	if record.ID == "" || record.Initiator != "tool_media_bridge" || record.Status != "ready" || record.Summary != "button clipped" || record.MediaCount != 1 {
+		t.Fatalf("tool-media visual record = %+v", record)
+	}
 }
 
 func TestToolImageProcessorUsesStructuredVisionProgress(t *testing.T) {
@@ -60,12 +67,21 @@ func TestToolImageProcessorUsesStructuredVisionProgress(t *testing.T) {
 
 	hasPreparing := false
 	ready := 0
+	analysisID := ""
 	for _, e := range events {
 		if e.Kind == event.Phase || e.Kind == event.Notice {
 			t.Fatalf("tool image processor emitted unstructured progress: %+v", e)
 		}
 		if e.Kind == event.VisionProgress && e.VisionProgress != nil && e.VisionProgress.Stage == event.VisionStagePreparing {
 			hasPreparing = true
+		}
+		if e.Kind == event.VisionProgress && e.VisionProgress != nil {
+			if analysisID == "" {
+				analysisID = e.VisionProgress.AnalysisID
+			}
+			if e.VisionProgress.AnalysisID != analysisID || e.VisionProgress.Initiator != "tool_media_bridge" || e.VisionProgress.MediaCount != 1 {
+				t.Fatalf("tool image progress identity = %+v", e.VisionProgress)
+			}
 		}
 		if e.Kind == event.VisionProgress && e.VisionProgress != nil && e.VisionProgress.Stage == event.VisionStageReady {
 			ready++
@@ -76,6 +92,9 @@ func TestToolImageProcessorUsesStructuredVisionProgress(t *testing.T) {
 	}
 	if ready != 1 {
 		t.Fatalf("ready events = %d, want exactly one", ready)
+	}
+	if analysisID == "" {
+		t.Fatal("tool image progress has no analysis id")
 	}
 }
 

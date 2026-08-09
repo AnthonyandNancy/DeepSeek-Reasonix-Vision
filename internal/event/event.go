@@ -547,6 +547,10 @@ type Event struct {
 
 type VisionProgressInfo struct {
 	Stage          VisionProgressStage
+	AnalysisID     string
+	Initiator      string
+	Attempt        int
+	MediaCount     int
 	ModelRef       string
 	ResponseDelta  string
 	ReasoningDelta string

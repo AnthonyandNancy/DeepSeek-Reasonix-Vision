@@ -48,6 +48,10 @@ type StreamAttempt struct {
 
 type VisionProgress struct {
 	Stage          string `json:"stage"`
+	AnalysisID     string `json:"analysisId,omitempty"`
+	Initiator      string `json:"initiator,omitempty"`
+	Attempt        int    `json:"attempt,omitempty"`
+	MediaCount     int    `json:"mediaCount,omitempty"`
 	ModelRef       string `json:"modelRef,omitempty"`
 	ResponseDelta  string `json:"responseDelta,omitempty" externalizable:"true"`
 	ReasoningDelta string `json:"reasoningDelta,omitempty" externalizable:"true"`
@@ -174,7 +178,8 @@ func ToWire(e event.Event) Event {
 	case event.VisionProgress:
 		if p := e.VisionProgress; p != nil {
 			w.VisionProgress = &VisionProgress{
-				Stage: string(p.Stage), ModelRef: p.ModelRef,
+				Stage: string(p.Stage), AnalysisID: p.AnalysisID, Initiator: p.Initiator,
+				Attempt: p.Attempt, MediaCount: p.MediaCount, ModelRef: p.ModelRef,
 				ResponseDelta: p.ResponseDelta, ReasoningDelta: p.ReasoningDelta,
 				Detail: p.Detail, ElapsedMs: p.ElapsedMs,
 			}
