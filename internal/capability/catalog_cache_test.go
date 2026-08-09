@@ -76,6 +76,31 @@ func TestBuildCatalogSurfacesCachedToolsForAutoStartFalse(t *testing.T) {
 	}
 }
 
+func TestBuildCatalogPropagatesDisabledStatusToCachedMCPTools(t *testing.T) {
+	cat := BuildCatalog(CatalogOptions{
+		Tools:    []tool.ContractEntry{{Name: plugin.ModelToolName("vision", "analyze_image")}},
+		Plugins:  []config.PluginEntry{{Name: "vision", AutoStart: boolPtr(false)}},
+		Disabled: map[string]bool{"vision": true},
+		CachedTools: map[string][]plugin.CachedTool{
+			"vision": {{Name: "analyze_image", Description: "analyze images", ReadOnly: true}},
+		},
+		CacheKeyOK: map[string]bool{"vision": true},
+		Profile:    ProfileDelivery,
+	})
+	server, ok := cat.Lookup("mcp-server:vision")
+	if !ok || server.Status != StatusDisabled {
+		t.Fatalf("disabled server = %+v, want status=%q", server, StatusDisabled)
+	}
+	toolEntry, ok := cat.Lookup("mcp-tool:vision/analyze_image")
+	if !ok || toolEntry.Status != StatusDisabled {
+		t.Fatalf("disabled cached tool = %+v, want status=%q", toolEntry, StatusDisabled)
+	}
+	decision := Route("use vision mcp to analyze the image", cat.Entries)
+	if len(decision.Candidates) != 0 {
+		t.Fatalf("disabled MCP still routed candidates: %+v", decision.Candidates)
+	}
+}
+
 func TestRecordRouterUsageAccumulates(t *testing.T) {
 	a := &Audit{}
 	a.RecordRouterUsage(100, 20, 0.005, 340)

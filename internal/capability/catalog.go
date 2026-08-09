@@ -80,6 +80,16 @@ func BuildCatalog(opts CatalogOptions) Catalog {
 	entries = append(entries, ToolEntries(opts.Tools)...)
 	entries = append(entries, SkillEntriesFiltered(opts.Skills, opts.Tools, profile)...)
 	entries = append(entries, MCPServerEntries(opts)...)
+	// A live registry can outlast a runtime disable toggle. Mark those entries
+	// disabled before deduplication so a ready registry tool cannot win over the
+	// disabled server state and remain routable.
+	if len(opts.Disabled) > 0 {
+		for i := range entries {
+			if entries[i].Kind == KindMCPTool && opts.Disabled[entries[i].Source] {
+				entries[i].Status = StatusDisabled
+			}
+		}
+	}
 
 	// Deduplicate by ID, preferring ready over configured.
 	byID := map[string]Entry{}
@@ -180,11 +190,10 @@ func MCPServerEntries(opts CatalogOptions) []Entry {
 			toolStatus = StatusReady
 		case status != StatusReady:
 			toolSrc = opts.CachedTools[name]
-			// A schema-cache-key mismatch marked the server stale; its
-			// tools carry the same staleness so routing prompts expose it.
-			if status == StatusStale {
-				toolStatus = StatusStale
-			}
+			// Cached concrete tools inherit the server lifecycle status. In
+			// particular, a disabled server must not leave stale cached tools
+			// looking configured and routable after a restart.
+			toolStatus = status
 		}
 		for _, ct := range toolSrc {
 			raw := strings.TrimSpace(ct.Name)

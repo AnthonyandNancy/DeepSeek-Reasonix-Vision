@@ -14,7 +14,6 @@ import (
 	"reasonix/internal/provider"
 	"reasonix/internal/taskintent"
 	"reasonix/internal/tool"
-	"reasonix/internal/vision"
 )
 
 // runLoopState holds per-Run loop counters and flags. It is package-private and
@@ -303,7 +302,7 @@ func (a *Agent) beginRunTurn(ctx context.Context, input string) (rawInput string
 	}
 	a.session.Add(provider.Message{
 		Role: provider.RoleUser, Content: input, RawContent: rawContent,
-		Images: userImages(ctx), CreatedAt: userCreatedAt,
+		Images: userImages(ctx), MediaRefs: userMediaRefs(ctx), CreatedAt: userCreatedAt,
 	})
 
 	state = &runLoopState{
@@ -958,63 +957,6 @@ func (a *Agent) handleFinalResponse(ctx context.Context, state *runLoopState, te
 	return false, nil // model gave a final answer
 }
 
-// toolImageTaskContextLimit bounds the user-authored focus forwarded to the
-// auxiliary vision model; the full transcript is never copied into that call.
-const toolImageTaskContextLimit = 2 * 1024
-
-func (a *Agent) processToolImages(ctx context.Context, calls []provider.ToolCall, results []string, images [][]string) ([]string, [][]string) {
-	if a.toolImages == nil {
-		return results, images
-	}
-	taskContext := a.currentTaskContext()
-	for i := range calls {
-		if len(images[i]) == 0 {
-			continue
-		}
-		out := a.toolImages.ProcessToolImages(ctx, vision.ToolImageInput{
-			ToolName: calls[i].Name, ToolCallID: calls[i].ID, ToolText: results[i], Images: images[i],
-			ModelRef: a.modelRef, ModelSupportsImages: a.modelSupportsImages,
-			TaskContext: taskContext, MaxTextBytes: maxToolOutputBytes,
-		})
-		results[i], images[i] = out.Text, out.Images
-	}
-	return results, images
-}
-
-func (a *Agent) currentTaskContext() string {
-	if content := strings.TrimSpace(a.classifierTaskText); content != "" {
-		return boundToolImageTaskContext(content)
-	}
-	if a.session == nil || a.session.Len() == 0 {
-		return ""
-	}
-	msgs := a.session.Snapshot()
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role != provider.RoleUser {
-			continue
-		}
-		content := strings.TrimSpace(msgs[i].RawContent)
-		if content == "" {
-			content = strings.TrimSpace(msgs[i].Content)
-		}
-		if content != "" {
-			return boundToolImageTaskContext(content)
-		}
-	}
-	return ""
-}
-
-func boundToolImageTaskContext(content string) string {
-	if len(content) <= toolImageTaskContextLimit {
-		return content
-	}
-	cut := toolImageTaskContextLimit
-	for cut > 0 && content[cut]&0xc0 == 0x80 {
-		cut--
-	}
-	return content[:cut] + "…[truncated]…"
-}
-
 // handleToolRound executes a tool batch, persists tool messages, handles
 // cancellation, todo stall tracking, recovery finalization pause, and the
 // max-steps grace round. cont=true continues the tool loop; cont=false returns
@@ -1063,6 +1005,7 @@ func (a *Agent) handleToolRound(ctx context.Context, state *runLoopState, step i
 	if a.toolImages != nil {
 		results, images = a.processToolImages(ctx, calls, results, images)
 	}
+	var localMedia []provider.Message
 	for i, call := range calls {
 		msg := provider.Message{
 			Role:       provider.RoleTool,
@@ -1075,6 +1018,15 @@ func (a *Agent) handleToolRound(ctx context.Context, state *runLoopState, step i
 			msg.ToolExecution = toProviderToolExecution(batch.executions[i])
 		}
 		a.session.Add(msg)
+		if raw := retainedLocalToolImages(batch.images[i], images[i]); len(raw) > 0 {
+			localMedia = append(localMedia, provider.Message{
+				Role: provider.RoleTool, ToolCallID: provider.LocalOnlyToolID, Name: provider.LocalOnlyToolName,
+				Images: raw, LocalOnly: true,
+			})
+		}
+	}
+	for _, media := range localMedia {
+		a.session.Add(media)
 	}
 	// If the context was cancelled during tool execution, return after storing
 	// the batch results so the session keeps paired tool-call history.

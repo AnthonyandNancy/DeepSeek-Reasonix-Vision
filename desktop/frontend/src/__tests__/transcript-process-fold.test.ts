@@ -50,7 +50,7 @@ try {
   const { Transcript } = await server.ssrLoadModule("/src/components/Transcript.tsx");
   const { LocaleProvider } = await server.ssrLoadModule("/src/lib/i18n.tsx");
 
-  function render(items: Item[], options: { mode?: "standard" | "compact"; running?: boolean; turnStartAt?: number; foldPref?: "auto" | "expanded"; visionProgress?: WireVisionProgress } = {}) {
+  function render(items: Item[], options: { mode?: "standard" | "compact"; running?: boolean; turnStartAt?: number; foldPref?: "auto" | "expanded"; visionProgress?: WireVisionProgress; visionProgressHistory?: WireVisionProgress[] } = {}) {
     displayMode = options.mode ?? "standard";
     processFoldPref = options.foldPref ?? "auto";
     const markup = renderToStaticMarkup(
@@ -64,6 +64,7 @@ try {
           running: options.running ?? false,
           turnStartAt: options.turnStartAt,
           visionProgress: options.visionProgress,
+          visionProgressHistory: options.visionProgressHistory,
         }),
       ),
     );
@@ -85,12 +86,33 @@ try {
     { kind: "assistant", id: "a-vision", text: "", reasoning: "waiting", streaming: true },
   ], {
     running: true,
-    visionProgress: { stage: "thinking", modelRef: "vision/vl", reasoningDelta: "checking both images" },
+    visionProgressHistory: [
+      { stage: "preparing", modelRef: "vision/vl" },
+      { stage: "connecting", modelRef: "vision/vl" },
+      { stage: "thinking", modelRef: "vision/vl", reasoningDelta: "checking both images" },
+    ],
   });
   const visionUser = visionDoc.querySelector(".msg--user");
   const visionCard = visionDoc.querySelector(".vision-progress");
   ok(Boolean(visionUser && visionCard && (visionUser.compareDocumentPosition(visionCard) & visionDoc.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING)), "vision progress renders below its user message");
   ok(visionDoc.querySelector(".transcript")?.firstElementChild?.classList.contains("vision-progress") !== true, "vision progress is not rendered at transcript root");
+  ok(visionDoc.querySelectorAll(".vision-progress__stage").length === 3, "vision lifecycle renders each retained stage");
+
+  const alternatingVisionDoc = render([
+    { kind: "user", id: "u-vision-alternating", text: "inspect again" },
+    { kind: "assistant", id: "a-vision-alternating", text: "", reasoning: "waiting", streaming: true },
+  ], {
+    running: true,
+    visionProgress: { stage: "response", responseDelta: "continued response" },
+    visionProgressHistory: [
+      { stage: "preparing", modelRef: "vision/vl" },
+      { stage: "response", modelRef: "vision/vl", responseDelta: "continued response" },
+      { stage: "thinking", modelRef: "vision/vl", reasoningDelta: "checking" },
+    ],
+  });
+  const alternatingSteps = alternatingVisionDoc.querySelectorAll(".vision-progress__step");
+  ok(alternatingSteps[1]?.querySelector("details")?.hasAttribute("open") === true, "revisited response stage remains active");
+  ok(alternatingSteps[2]?.querySelector("details")?.hasAttribute("open") === false, "previous thinking stage is completed after response resumes");
 
   for (const mode of ["standard", "compact"] as const) {
     const doc = render(warningTurn, { mode });

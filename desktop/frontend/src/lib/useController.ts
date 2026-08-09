@@ -366,6 +366,7 @@ interface State {
   currentAssistant?: string;
   live?: LiveStream;
   visionProgress?: VisionProgress;
+  visionProgressHistory?: VisionProgress[];
   pendingUser?: string;
   deliveryRecoveryActive: boolean;
   discardTurn?: boolean;
@@ -641,6 +642,16 @@ function metaWithoutCanonicalTodos(meta?: Meta): Meta | undefined {
 
 const STALE_TURN_RECONCILE_MS = 30_000;
 const CANCEL_RECONCILE_DELAYS_MS = [0, 100, 300, 1_000] as const;
+const TURN_ACTIVITY_EVENT_KINDS = new Set<WireEvent["kind"]>([
+  "turn_started",
+  "text",
+  "reasoning",
+  "message",
+  "tool_dispatch",
+  "tool_progress",
+  "tool_result",
+  "vision_progress",
+]);
 // After a stale runtime snapshot is rejected (its fetch predates the live
 // prompt), refetch authoritative backend state once. Short enough to be barely
 // perceptible, long enough to let any other in-flight replay events land first
@@ -657,6 +668,22 @@ export function shouldReconcileStaleTurn(
 ): boolean {
   if (!state?.running || !state.turnActive || lastTurnActivityAt <= 0) return false;
   return Math.max(0, now - lastTurnActivityAt) >= timeoutMs;
+}
+
+export function staleTurnWatchdogDelay(
+  state: Pick<State, "running" | "turnActive"> | undefined,
+  lastTurnActivityAt: number,
+  now = Date.now(),
+  timeoutMs = STALE_TURN_RECONCILE_MS,
+  lastProbeAt = 0,
+): number | undefined {
+  const lastObservedAt = Math.max(lastTurnActivityAt, lastProbeAt);
+  if (!state?.running || !state.turnActive || lastObservedAt <= 0) return undefined;
+  return Math.max(0, timeoutMs - Math.max(0, now - lastObservedAt));
+}
+
+export function isTurnActivityEvent(kind: WireEvent["kind"]): boolean {
+  return TURN_ACTIVITY_EVENT_KINDS.has(kind);
 }
 
 function hasCachedLiveTurn(state: State | undefined): boolean {
@@ -1328,6 +1355,7 @@ function applyEvent(s: State, e: WireEvent): State {
         seq,
         live: { id, text: "", reasoning: "", reasoningComplete: false },
         visionProgress: undefined,
+        visionProgressHistory: undefined,
         running: true,
         turnActive: true,
         pendingPrompt: false,
@@ -1359,15 +1387,36 @@ function applyEvent(s: State, e: WireEvent): State {
       const previous = s.visionProgress;
       const incoming = e.visionProgress;
       const active = new Set(["preparing", "connecting", "waiting", "response", "thinking", "parsing"]);
-      const newAttempt = incoming.stage === "preparing" && (previous?.stage === "failed" || previous?.stage === "cancelled");
+      const newAttempt = incoming.stage === "preparing" && (previous?.stage === "failed" || previous?.stage === "cancelled" || previous?.stage === "ready");
+      const merge = (before: VisionProgress | undefined, after: VisionProgress): VisionProgress => ({
+        ...before,
+        ...after,
+        responseDelta: (before?.responseDelta ?? "") + (after.responseDelta ?? "") || undefined,
+        reasoningDelta: (before?.reasoningDelta ?? "") + (after.reasoningDelta ?? "") || undefined,
+      });
+      const history = s.visionProgressHistory ?? [];
+      let nextHistory: VisionProgress[];
+      if (newAttempt) {
+        nextHistory = [...history, { ...incoming }];
+      } else {
+        let attemptStart = 0;
+        for (let index = history.length - 1; index >= 0; index -= 1) {
+          if (history[index].stage === "ready" || history[index].stage === "failed" || history[index].stage === "cancelled") {
+            attemptStart = index + 1;
+            break;
+          }
+        }
+        const sameStage = history.findIndex((entry, index) => index >= attemptStart && entry.stage === incoming.stage);
+        if (sameStage >= 0) {
+          nextHistory = history.map((entry, index) => index === sameStage ? merge(entry, incoming) : entry);
+        } else {
+          nextHistory = [...history, { ...incoming }];
+        }
+      }
       return {
         ...s,
-        visionProgress: {
-          ...previous,
-          ...incoming,
-          responseDelta: newAttempt ? (incoming.responseDelta ?? "") : (previous?.responseDelta ?? "") + (incoming.responseDelta ?? ""),
-          reasoningDelta: newAttempt ? (incoming.reasoningDelta ?? "") : (previous?.reasoningDelta ?? "") + (incoming.reasoningDelta ?? ""),
-        },
+        visionProgress: newAttempt ? { ...incoming } : merge(previous, incoming),
+        visionProgressHistory: nextHistory,
         running: active.has(incoming.stage) ? true : s.running,
       };
     }
@@ -1744,6 +1793,8 @@ export function reducer(s: State, a: Action): State {
         pendingPrompt: false,
         cancelRequested: false,
         cancellable: true,
+        visionProgress: undefined,
+        visionProgressHistory: undefined,
         ...resetTurnTiming(),
         // New turn epoch: forget the previous prompt anchor so a genuinely new
         // prompt re-anchors freshly instead of inheriting a stale id/time.
@@ -2958,15 +3009,7 @@ export function useController() {
         if (!acceptsRuntimeEventEpoch(acceptedEpoch, e.runtimeEpoch)) return;
         if (!acceptedEpoch) runtimeEpochByTabRef.current.set(targetTabId, e.runtimeEpoch);
       }
-      if (
-        e.kind === "turn_started" ||
-        e.kind === "text" ||
-        e.kind === "reasoning" ||
-        e.kind === "message" ||
-        e.kind === "tool_dispatch" ||
-        e.kind === "tool_progress" ||
-        e.kind === "tool_result"
-      ) {
+      if (isTurnActivityEvent(e.kind)) {
         lastTurnActivityAtByTab.current.set(targetTabId, Date.now());
       }
       if (e.kind === "text" || e.kind === "reasoning") {
@@ -3121,23 +3164,27 @@ export function useController() {
   // message or synthetic todo update has already closed the live stream.
   useEffect(() => {
     if (!activeTabId) return;
-    const s = statesRef.current.get(activeTabId);
-    const now = Date.now();
-    const lastTurnActivityAt = lastTurnActivityAtByTab.current.get(activeTabId) ?? 0;
-    if (!s?.running || !s.turnActive || lastTurnActivityAt <= 0) return;
-    const since = Math.max(0, now - lastTurnActivityAt);
-    if (shouldReconcileStaleTurn(s, lastTurnActivityAt, now)) {
-      void reconcileTabRuntime(activeTabId);
-      return;
-    }
-    const timer = window.setTimeout(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    let lastProbeAt = 0;
+    const schedule = () => {
+      if (cancelled) return;
       const cur = statesRef.current.get(activeTabId);
       const lastActivity = lastTurnActivityAtByTab.current.get(activeTabId) ?? 0;
-      if (shouldReconcileStaleTurn(cur, lastActivity)) {
-        void reconcileTabRuntime(activeTabId);
+      const delay = staleTurnWatchdogDelay(cur, lastActivity, Date.now(), STALE_TURN_RECONCILE_MS, lastProbeAt);
+      if (delay === undefined) return;
+      if (delay === 0) {
+        lastProbeAt = Date.now();
+        void reconcileTabRuntime(activeTabId).finally(schedule);
+        return;
       }
-    }, STALE_TURN_RECONCILE_MS - since);
-    return () => window.clearTimeout(timer);
+      timer = window.setTimeout(schedule, delay);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [activeTabId, reconcileTabRuntime, activeState.running, activeState.turnActive]);
 
   // Replay any pending approval/ask prompts when switching tabs, so a

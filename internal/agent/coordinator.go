@@ -861,7 +861,7 @@ func (c *Coordinator) persistExecutorNoOp(ctx context.Context, input, plan strin
 	}
 	c.executor.session.Add(provider.Message{
 		Role: provider.RoleUser, Content: providerContent, RawContent: rawContent,
-		Images: userImages(ctx), CreatedAt: time.Now().UnixMilli(),
+		Images: userImages(ctx), MediaRefs: userMediaRefs(ctx), CreatedAt: time.Now().UnixMilli(),
 	})
 	c.executor.session.Add(provider.Message{Role: provider.RoleAssistant, Content: plan})
 }
@@ -882,7 +882,7 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 	if input != rawInput {
 		rawContent = rawInput
 	}
-	c.plannerSess.Add(provider.Message{Role: provider.RoleUser, Content: input, RawContent: rawContent})
+	c.plannerSess.Add(provider.Message{Role: provider.RoleUser, Content: input, RawContent: rawContent, MediaRefs: userMediaRefs(ctx), CreatedAt: time.Now().UnixMilli()})
 	ctx = provider.WithRequestAttemptCounter(ctx)
 	var usage *provider.Usage
 	streamCompleted := false
@@ -893,8 +893,13 @@ func (c *Coordinator) plan(ctx context.Context, input string) (string, error) {
 		}
 	}()
 
+	messages := provider.ModelMessages(c.plannerSess.Messages)
+	// The plain planner path does not use an Agent run loop, so apply the same
+	// current-turn boundary explicitly: old capability/visual control blocks
+	// remain durable for UI, but never become instructions for this plan.
+	messages = StripHistoricalTransientUserBlocks(messages, len(messages)-1)
 	ch, err := c.planner.Stream(ctx, provider.Request{
-		Messages:    provider.ModelMessages(c.plannerSess.Messages),
+		Messages:    messages,
 		Temperature: provider.OptionalTemperature(c.temperature),
 	})
 	if err != nil {

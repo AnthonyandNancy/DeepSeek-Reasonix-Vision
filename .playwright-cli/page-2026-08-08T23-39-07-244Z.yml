@@ -1,0 +1,139 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - link "跳到输入框" [ref=e5] [cursor=pointer]:
+          - /url: "#composer-input"
+        - complementary "Reasonix 导航" [ref=e6]:
+          - img "Reasonix" [ref=e9]
+          - button "新建会话" [ref=e11]
+          - generic [ref=e16]:
+            - generic [ref=e17]:
+              - generic [ref=e18]: 项目
+              - generic [ref=e19]:
+                - 'button "按时间筛选: 全部时间" [ref=e22]'
+                - button "全部收起" [disabled] [ref=e27]
+                - button "更多操作" [ref=e35]
+                - button "添加新项目" [ref=e42]
+            - generic [ref=e46]:
+              - generic [ref=e47]: 还没有项目
+              - button "添加新项目" [ref=e48]
+          - navigation [ref=e52]:
+            - generic "侧栏工具" [ref=e53]:
+              - button "回收站" [ref=e55]
+              - button "自动化" [ref=e61]
+              - button "设置" [ref=e71]
+        - separator "调整导航栏宽度" [ref=e76]
+        - generic [ref=e77]:
+          - generic [ref=e78]:
+            - button "收起导航" [pressed] [ref=e80]
+            - generic [ref=e84]:
+              - heading "Global" [level=1] [ref=e85]
+              - button "重命名会话" [disabled] [ref=e87]
+            - generic [ref=e91]:
+              - button "复制会话" [ref=e93]
+              - button "导出会话" [disabled] [ref=e99]
+              - button "改动" [ref=e104]
+              - button "终端" [ref=e110]
+              - button "键盘快捷键" [ref=e115]
+              - button "命令" [ref=e120]
+              - button "展开工作区" [ref=e124]
+              - button "Session summary" [ref=e128]
+          - main [ref=e131]:
+            - generic [ref=e134]:
+              - img "Reasonix" [ref=e136]
+              - heading "一个编码智能体" [level=2] [ref=e137]
+              - generic [ref=e138]: 描述任务，或随便问点什么。
+              - generic [ref=e139]:
+                - generic [ref=e140]:
+                  - generic [ref=e141]: /
+                  - text: 命令
+                - generic [ref=e142]:
+                  - generic [ref=e143]: "@"
+                  - text: 引用文件
+                - generic [ref=e144]:
+                  - generic [ref=e145]: ⏎
+                  - text: 发送
+              - generic [ref=e146]:
+                - button "讲讲这个代码库的架构" [ref=e147]
+                - button "总结最近的 git 改动" [ref=e148]
+                - button "智能体的运行主循环在哪，它做了什么？" [ref=e149]
+                - button "找出并修复这个项目里的一个 bug" [ref=e150]
+          - generic [ref=e154]:
+            - separator "拖动调整输入区高度，双击重置" [ref=e155]
+            - generic [ref=e157]:
+              - generic [ref=e158]: ›
+              - textbox "给 Reasonix 发消息… ( / 命令 · @ 文件 · ! 终端 )" [ref=e160]:
+                - /placeholder: 给 Reasonix 发消息…  ( / 命令 · @ 文件 · ! 终端 )
+              - button "发送（Enter）" [disabled] [ref=e162]
+            - generic [ref=e166]:
+              - button "添加内容" [ref=e169]
+              - button "执行方式 · 常规" [ref=e173]:
+                - generic [ref=e176]: 常规
+              - button "工作模式 · 均衡" [ref=e182]:
+                - generic [ref=e184]: 均衡
+              - generic "工具权限（Ctrl+Y 切换 Yolo）" [ref=e190]:
+                - button "询问" [pressed] [ref=e191]
+                - button "自动" [ref=e195]
+                - button "Yolo" [ref=e200]
+              - button "连接中…" [ref=e208]
+        - complementary "终端"
+        - separator
+        - generic [ref=e222]:
+          - generic [ref=e227]:
+            - text: "|"
+            - generic [ref=e229]:
+              - generic [ref=e230]: 本次命中
+              - generic [ref=e231]: "-"
+          - text: "|"
+          - generic [ref=e232]:
+            - text: "|"
+            - generic [ref=e234]:
+              - generic [ref=e235]: 会话 tokens
+              - generic [ref=e236]: "-"
+          - generic [ref=e237]:
+            - text: "|"
+            - generic [ref=e239]:
+              - generic [ref=e240]: 本次 tokens
+              - generic [ref=e241]: "-"
+          - generic [ref=e242]:
+            - text: "|"
+            - generic [ref=e244]:
+              - generic [ref=e245]: 本次费用
+              - generic [ref=e246]: ¥0.0000
+          - generic [ref=e247]:
+            - text: "|"
+            - generic [ref=e249]:
+              - generic [ref=e250]: 当前会话
+              - generic [ref=e251]: 0 轮
+          - generic [ref=e252]:
+            - text: "|"
+            - generic [ref=e254]:
+              - generic [ref=e255]: 上下文
+              - generic [ref=e256]: "-"
+          - text: "|"
+          - generic [ref=e257]:
+            - text: "|"
+            - generic [ref=e259]:
+              - generic [ref=e260]: 会话费用
+              - generic [ref=e261]: ¥0.0000
+          - generic [ref=e262]:
+            - text: "|"
+            - generic [ref=e264]:
+              - generic [ref=e265]: 余额
+              - generic [ref=e266]: "-"
+      - generic [ref=e268]:
+        - generic [ref=e270]: Reasonix
+        - generic [ref=e271]: Agent 工作区
+      - generic "Window controls" [ref=e276]:
+        - button "Minimize window" [ref=e277]
+        - button "Maximize or restore window" [ref=e279]
+        - button "Close window" [ref=e282]
+    - status
+  - generic [ref=e286]:
+    - generic [ref=e287]: Reasonix hit an error — send us the report, or copy it
+    - generic [ref=e288]: "[window.error] TypeError: Cannot read properties of null (reading 'nodes') at Fe (http://127.0.0.1:34173/wails/ipc.js:32:26544) at bn (http://127.0.0.1:34173/wails/ipc.js:32:27002) at new In (http://127.0.0.1:34173/wails/ipc.js:41:87) at http://127.0.0.1:34173/wails/ipc.js:41:367 --- breadcrumbs --- -0.1s [app] start build 22b7211"
+    - generic [ref=e289]:
+      - button "Send report" [ref=e290]
+      - button "Copy" [ref=e291]
+    - generic [ref=e292]: The report contains only the error text above (user names in paths removed) plus app version and OS.

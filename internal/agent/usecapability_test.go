@@ -1124,6 +1124,29 @@ func TestUseCapabilityListActionNoSideEffects(t *testing.T) {
 	}
 }
 
+func TestUseCapabilityListDoesNotRecommendDisabledServerCall(t *testing.T) {
+	host := plugin.NewHost()
+	defer host.Close()
+	runtime := NewMCPCapabilityRuntime(context.Background(), host, []plugin.Spec{{Name: "vision", Authorized: true}}, tool.NewRegistry(), nil)
+	if !runtime.SetServerEnabled("vision", false) {
+		t.Fatal("SetServerEnabled returned false")
+	}
+	proxy := runtime.NewFrontend(nil, nil)
+	resolved, err := proxy.ResolveCall(context.Background(), json.RawMessage(`{"action":"list"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resolved.Result, `"status": "disabled"`) {
+		t.Fatalf("disabled server status missing:\n%s", resolved.Result)
+	}
+	if strings.Contains(resolved.Result, "Call action=call on an enabled") || strings.Contains(resolved.Result, "mcp-server:vision to connect") {
+		t.Fatalf("disabled list still recommends a call:\n%s", resolved.Result)
+	}
+	if !strings.Contains(resolved.Result, "Disabled MCP servers are not callable") {
+		t.Fatalf("disabled list lacks non-callable explanation:\n%s", resolved.Result)
+	}
+}
+
 func TestPlannerAllowsAuthorizedNonReadOnlyNonDestructiveMCP(t *testing.T) {
 	calls := 0
 	target := layeredReadOnlyMCPBoundaryTarget{

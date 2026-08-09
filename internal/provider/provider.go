@@ -52,8 +52,14 @@ type Message struct {
 	RawContent string `json:"raw_content,omitempty"`
 	// ProviderContent is a transitional field written by early Context Engine v2
 	// builds. Loaders migrate it into Content/RawContent before normal use.
-	ProviderContent  string   `json:"provider_content,omitempty"`
-	Images           []string `json:"images,omitempty"`            // data URLs (data:<mime>;base64,…) on user (attachments) and tool (MCP image results) messages; embedded only for vision-capable models
+	ProviderContent string   `json:"provider_content,omitempty"`
+	Images          []string `json:"images,omitempty"` // data URLs (data:<mime>;base64,…) on user (attachments) and tool (MCP image results) messages; embedded only for vision-capable models
+	// MediaRefs is host-local structured attachment metadata. It preserves the
+	// safe workspace references for future historical-media recovery without
+	// putting paths into provider requests; ModelMessages strips it at the wire
+	// boundary. Older sessions simply leave it empty and use legacy text/display
+	// recovery instead.
+	MediaRefs        []string `json:"media_refs,omitempty"`
 	ReasoningContent string   `json:"reasoning_content,omitempty"` // assistant: thinking-mode chain-of-thought, round-tripped on multi-turn
 	// ReasoningID is the provider-issued identifier of the reasoning item
 	// (OpenAI Responses schema: Reasoning.id is required on input items).
@@ -269,7 +275,7 @@ func SanitizeToolPairing(msgs []Message) []Message { return NormalizeMessages(ms
 func ModelMessages(msgs []Message) []Message {
 	needsCopy := false
 	for _, m := range msgs {
-		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
+		if m.LocalOnly || m.RawContent != "" || m.ProviderContent != "" || len(m.MediaRefs) > 0 || m.DecisionReceipt != nil || len(m.DecisionReceipts) > 0 || m.ToolExecution != nil {
 			needsCopy = true
 			break
 		}
@@ -287,6 +293,7 @@ func ModelMessages(msgs []Message) []Message {
 			candidate.ProviderContent = ""
 		}
 		candidate.RawContent = ""
+		candidate.MediaRefs = nil
 		candidate.DecisionReceipt = nil
 		candidate.DecisionReceipts = nil
 		// Local shell metadata must never enter provider request bytes.

@@ -1313,7 +1313,11 @@ func (a *App) applyConfigChange(mutate func(*config.Config) error) error {
 }
 
 func (a *App) applyConfigChangeWithWarning(setting string, mutate func(*config.Config) error) (string, error) {
-	if err := a.ensureActiveTabRebuildAllowed(setting); err != nil {
+	if setting == "vision model" {
+		if err := a.ensureLiveControllersRuntimeMutationAllowed(setting); err != nil {
+			return "", err
+		}
+	} else if err := a.ensureActiveTabRebuildAllowed(setting); err != nil {
 		return "", err
 	}
 	if err := func() error {
@@ -1334,7 +1338,11 @@ func (a *App) applyConfigChangeWithWarning(setting string, mutate func(*config.C
 	}(); err != nil {
 		return "", err
 	}
-	if err := a.rebuildSetting(setting); err != nil {
+	rebuild := a.rebuildSetting
+	if setting == "vision model" {
+		rebuild = a.rebuildSettingForAllTabs
+	}
+	if err := rebuild(setting); err != nil {
 		if warning, ok := a.deferredRebuildWarning(setting, err); ok {
 			return warning, nil
 		}
@@ -2066,23 +2074,6 @@ func (a *App) SetPlannerModel(ref string) error {
 			ref = resolved
 		}
 		c.Agent.PlannerModel = ref
-		return nil
-	})
-}
-
-// SetVisionModel sets (or clears) the image-capable model used to extract
-// ModLens-v2-compatible visual evidence when the active model is text-only.
-func (a *App) SetVisionModel(ref string) error {
-	return a.applyConfigChange(func(c *config.Config) error {
-		ref = strings.TrimSpace(ref)
-		if ref != "" {
-			resolved, err := selectableDesktopModelRef(c, ref)
-			if err != nil {
-				return err
-			}
-			ref = resolved
-		}
-		c.Agent.VisionModel = ref
 		return nil
 	})
 }

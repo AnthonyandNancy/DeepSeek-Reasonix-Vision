@@ -744,9 +744,25 @@ func (t *UseCapabilityTool) listServers() (string, error) {
 			Connected:    connected,
 		})
 	}
+	noteParts := []string{"list does not start MCP servers."}
+	callable := false
+	disabled := false
+	for _, entry := range list {
+		if entry.Status == "disabled" {
+			disabled = true
+			continue
+		}
+		callable = true
+	}
+	if callable {
+		noteParts = append(noteParts, "Call action=call on an enabled mcp-server:<name> to connect after authorization, or mcp-tool:<server>/<tool> for a concrete tool.")
+	}
+	if disabled {
+		noteParts = append(noteParts, "Disabled MCP servers are not callable until they are enabled by the host.")
+	}
 	b, err := json.MarshalIndent(map[string]any{
 		"servers": list,
-		"note":    "list does not start MCP servers. Call action=call on mcp-server:<name> to connect after authorization, or mcp-tool:<server>/<tool> for a concrete tool.",
+		"note":    strings.Join(noteParts, " "),
 	}, "", "  ")
 	if err != nil {
 		return "", err

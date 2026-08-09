@@ -296,7 +296,8 @@ type Controller struct {
 	// turn counts model turns this session, passed to hooks in their payload.
 	turn int
 
-	displayRecorder func(content, display string)
+	displayRecorder               func(content, display string)
+	historicalUserContentResolver func(content string) string
 }
 
 type approvalReply struct {
@@ -477,8 +478,13 @@ type Options struct {
 	CapabilityRuntime *agent.MCPCapabilityRuntime
 	// WorkspaceRoot is the project root checkpoint restores are confined to ("" =
 	// no confinement). Frontends pass the cwd they launched the session in.
-	WorkspaceRoot          string
-	ExternalFolderToolRefs externalFolderToolRefs
+	WorkspaceRoot string
+	// HistoricalUserContentResolver is an optional legacy-display seam. Desktop
+	// sessions written before structured MediaRefs may retain attachment refs
+	// only in .display.json; the frontend supplies the resolved display text here
+	// without making control depend on desktop storage formats.
+	HistoricalUserContentResolver func(content string) string
+	ExternalFolderToolRefs        externalFolderToolRefs
 	// ResponseLanguage controls final-answer language preference. Empty/auto
 	// means no transient injection because the stable language policy follows the
 	// current user turn.
@@ -608,6 +614,7 @@ func New(opts Options) *Controller {
 		runtimeProfile:                    runtimeProfile,
 		ablation:                          opts.Ablation,
 		workspaceRoot:                     opts.WorkspaceRoot,
+		historicalUserContentResolver:     opts.HistoricalUserContentResolver,
 		externalFolderToolRefs:            opts.ExternalFolderToolRefs,
 		providerResolver:                  opts.ProviderResolver,
 		approval:                          newApprovalManager(opts.Policy, ToolApprovalAsk, opts.ApprovalTimeout),
@@ -666,6 +673,32 @@ func (c *Controller) SetDisplayRecorder(fn func(content, display string)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.displayRecorder = fn
+}
+
+// SetHistoricalUserContentResolver installs the optional legacy display lookup
+// used when recovering media from sessions that predate structured MediaRefs.
+// The callback is frontend-owned and may resolve the current session path at
+// call time, which keeps it correct across session rotation.
+func (c *Controller) SetHistoricalUserContentResolver(fn func(content string) string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.historicalUserContentResolver = fn
+}
+
+func (c *Controller) resolveHistoricalUserContent(content string) string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	resolver := c.historicalUserContentResolver
+	c.mu.Unlock()
+	if resolver == nil {
+		return ""
+	}
+	return resolver(content)
 }
 
 // SetExtensions installs the extension dispatcher after construction. Boot
@@ -1950,7 +1983,7 @@ func (c *Controller) Run(ctx context.Context, input string) (err error) {
 	parentSession := c.parentSessionID()
 	ctx = agent.WithParentSession(ctx, parentSession)
 	ctx = jobs.WithSession(ctx, parentSession)
-	resolvedImages := c.resolveInputImages(input)
+	media := c.resolveMediaForTurn(input)
 	rawInput := input
 	ctx = agent.WithRawUserInput(ctx, rawInput)
 	input = c.Compose(input)
@@ -1982,8 +2015,9 @@ func (c *Controller) Run(ctx context.Context, input string) (err error) {
 	}
 	c.markInFlightTurn(startMessages, true)
 	defer c.clearInFlightTurn()
-	route := c.routeImagesOnce(ctx, &ImageRouteState{}, input, rawInput, resolvedImages)
+	route := c.routeResolvedMediaOnce(ctx, &ImageRouteState{}, input, rawInput, media)
 	ctx = agent.WithUserImages(ctx, route.Images)
+	ctx = agent.WithUserMediaRefs(ctx, mediaRefsForResolvedImages(media.Images))
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
 	input = route.Input
 	if route.Notice != "" {
@@ -2031,9 +2065,10 @@ func (c *Controller) RunSubagentProfile(ctx context.Context, name, task string, 
 	ctx = agent.WithResponseLanguagePreference(ctx, c.responseLanguage)
 	ctx = agent.WithReasoningLanguagePreference(ctx, c.reasoningLanguage)
 	ctx = agent.WithSubagentDepth(ctx, 0)
-	resolvedImages := c.resolveInputImages(task)
-	route := c.routeImagesOnce(ctx, &ImageRouteState{}, task, task, resolvedImages)
+	media := c.resolveMediaForTurn(task)
+	route := c.routeResolvedMediaOnce(ctx, &ImageRouteState{}, task, task, media)
 	ctx = agent.WithUserImages(ctx, route.Images)
+	ctx = agent.WithUserMediaRefs(ctx, mediaRefsForResolvedImages(media.Images))
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
 	if route.Notice != "" {
 		c.emitImageRouteNotice(route.Notice)

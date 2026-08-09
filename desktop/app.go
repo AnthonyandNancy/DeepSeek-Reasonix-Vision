@@ -1435,6 +1435,21 @@ func (a *App) bindControllerDisplayRecorder(ctrl control.SessionAPI) {
 		}
 		_ = recordSessionDisplay(dir, ctrl.SessionPath(), content, display)
 	})
+	// Legacy sessions may have lost attachment refs from the provider-visible
+	// transcript while retaining them in the Desktop display sidecar. Keep the
+	// recovery seam optional at the port boundary so control remains independent
+	// of Desktop's storage format.
+	if resolver, ok := ctrl.(interface {
+		SetHistoricalUserContentResolver(func(content string) string)
+	}); ok {
+		resolver.SetHistoricalUserContentResolver(func(content string) string {
+			dir := ctrl.SessionDir()
+			if dir == "" {
+				dir = config.SessionDir()
+			}
+			return resolveSessionDisplay(dir, ctrl.SessionPath(), content)
+		})
+	}
 }
 
 // Cancel aborts the in-flight turn.

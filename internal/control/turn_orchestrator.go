@@ -110,7 +110,7 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 	c := o.c
 	c.maybeSessionStart(ctx)
 	parentSession := c.parentSessionID()
-	resolvedImages := c.resolveInputImages(raw)
+	media := c.resolveMediaForTurn(raw)
 	ctx = agent.WithParentSession(ctx, parentSession)
 	ctx = jobs.WithSession(ctx, parentSession)
 	ctx = agent.WithResponseLanguagePreference(ctx, c.responseLanguage)
@@ -141,14 +141,14 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 
 	c.markInFlightTurn(startMessages, true)
 	c.sink.Emit(event.Event{Kind: event.TurnStarted})
-	route := c.routeImagesOnce(ctx, &ImageRouteState{}, input, raw, resolvedImages)
+	route := c.routeResolvedMediaOnce(ctx, &ImageRouteState{}, input, raw, media)
 	ctx = agent.WithUserImages(ctx, route.Images)
+	ctx = agent.WithUserMediaRefs(ctx, mediaRefsForResolvedImages(media.Images))
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
 	input = route.Input
 	if route.Notice != "" {
 		c.emitImageRouteNotice(route.Notice)
 	}
-
 	inFlight := true
 	defer func() {
 		if inFlight {
@@ -158,7 +158,7 @@ func (o *turnOrchestrator) runSubagentSkillTurns(ctx context.Context, skills []s
 	if c.executor == nil {
 		return fmt.Errorf("subagent slash invocation requires an active session")
 	}
-	c.executor.Session().Add(provider.Message{Role: provider.RoleUser, Content: input, Images: route.Images, CreatedAt: time.Now().UnixMilli()})
+	c.executor.Session().Add(provider.Message{Role: provider.RoleUser, Content: input, RawContent: raw, Images: route.Images, MediaRefs: mediaRefsForResolvedImages(media.Images), CreatedAt: time.Now().UnixMilli()})
 
 	for _, sk := range skills {
 		sk = c.skills.prepare(sk)
@@ -202,7 +202,13 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	parentSession := c.parentSessionID()
 	ctx = agent.WithParentSession(ctx, parentSession)
 	ctx = jobs.WithSession(ctx, parentSession)
-	resolvedImages := c.resolveInputImages(turn.input)
+	media := c.resolveMediaForTurn(turn.input)
+	if len(media.Images) == 0 && strings.TrimSpace(turn.raw) != strings.TrimSpace(turn.input) {
+		fallback := c.resolveMediaForTurn(turn.raw)
+		if len(fallback.Images) > 0 || fallback.ReanalysisRequested {
+			media = fallback
+		}
+	}
 	ctx = agent.WithRawUserInput(ctx, turn.raw)
 	continuation := turn.goalContinuation
 	var input string
@@ -268,14 +274,14 @@ func (o *turnOrchestrator) runOrchestratedTurn(ctx context.Context, turn orchest
 	c.markInFlightTurn(startMessages, !turn.synthetic && !IsSyntheticUserMessage(turn.raw))
 	ctx = agent.WithTurnStartedEventEmitted(ctx)
 	c.sink.Emit(event.Event{Kind: event.TurnStarted})
-	route := c.routeImagesOnce(ctx, &ImageRouteState{}, input, turn.raw, resolvedImages)
+	route := c.routeResolvedMediaOnce(ctx, &ImageRouteState{}, input, turn.raw, media)
 	ctx = agent.WithUserImages(ctx, route.Images)
+	ctx = agent.WithUserMediaRefs(ctx, mediaRefsForResolvedImages(media.Images))
 	ctx = agent.WithDirectImageTurn(ctx, route.Mode == ImageRouteDirectMain)
 	input = route.Input
 	if route.Notice != "" {
 		c.emitImageRouteNotice(route.Notice)
 	}
-
 	var autoResearchTaskID string
 	if continuation != nil {
 		autoResearchTaskID = continuation.autoResearchTaskID

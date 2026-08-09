@@ -6,13 +6,19 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	_ "golang.org/x/image/webp"
 	"golang.org/x/text/transform"
 
 	fileenc "reasonix/internal/fileutil/encoding"
@@ -22,6 +28,8 @@ import (
 const (
 	readFileBinaryPeek   = 8 * 1024   // bytes scanned for NUL before reading further
 	readFileDetectSample = 256 * 1024 // bytes sampled for encoding detection before streaming
+	readFileImageMax     = 10 * 1024 * 1024
+	readFileImagePixels  = 50_000_000
 )
 
 func init() { tool.RegisterBuiltin(readFile{}) }
@@ -72,6 +80,92 @@ func (readFile) SnipHint() tool.SnipHint {
 }
 
 func (r readFile) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	text, _, err := r.ExecuteWithImages(ctx, args)
+	return text, err
+}
+
+func (r readFile) ExecuteWithImages(ctx context.Context, args json.RawMessage) (string, []string, error) {
+	var p struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", nil, fmt.Errorf("invalid args: %w", err)
+	}
+	if p.Path == "" {
+		return "", nil, fmt.Errorf("path is required")
+	}
+	rp := resolveReadablePath(r.workDir, p.Path, r.paths)
+	p.Path = rp.Path
+	if confineRead(r.forbidRoots, p.Path) {
+		return "", nil, &os.PathError{Op: "open", Path: p.Path, Err: os.ErrNotExist}
+	}
+	if mime := imageMIMEForPath(p.Path); mime != "" {
+		data, err := readValidatedToolImage(p.Path, mime)
+		if err != nil {
+			if rp.External {
+				return "", nil, fmt.Errorf("read %s: %s", rp.DisplayPath, rp.ErrorText(err))
+			}
+			return "", nil, fmt.Errorf("read %s: %w", rp.DisplayPath, err)
+		}
+		return fmt.Sprintf("read image %s [image: %s]", rp.DisplayPath, mime), []string{"data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}, nil
+	}
+	text, err := r.executeText(ctx, args)
+	return text, nil, err
+}
+
+func imageMIMEForPath(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	default:
+		return ""
+	}
+}
+
+func readValidatedToolImage(path, expectedMIME string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() || info.Size() <= 0 || info.Size() > readFileImageMax {
+		return nil, fmt.Errorf("image must be between 1 byte and 10 MB")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, readFileImageMax+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 || len(data) > readFileImageMax {
+		return nil, fmt.Errorf("image must be between 1 byte and 10 MB")
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("invalid image data: %w", err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > readFileImagePixels/cfg.Height {
+		return nil, fmt.Errorf("image dimensions exceed the safe decode limit")
+	}
+	actualMIME := map[string]string{"png": "image/png", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}[format]
+	if actualMIME == "" || actualMIME != expectedMIME {
+		return nil, fmt.Errorf("image content type %q does not match %q", actualMIME, expectedMIME)
+	}
+	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
+		return nil, fmt.Errorf("invalid image pixels: %w", err)
+	}
+	return data, nil
+}
+
+func (r readFile) executeText(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset,omitempty"`

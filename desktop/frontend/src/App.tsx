@@ -4965,6 +4965,7 @@ export default function App() {
                 rewindDisabled={Boolean(activeTab?.readOnly) || !controllerReady || hydratePlaceholderActive || rewindState != null || rewindCommitting || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
                 running={state.running || rewindCommitting}
                 visionProgress={state.visionProgress}
+                visionProgressHistory={state.visionProgressHistory}
                 turnStartAt={state.turnStartAt}
                 welcomeVariant={sidebarCreation ? "creation" : "default"}
                 creationMode={sidebarCreation}

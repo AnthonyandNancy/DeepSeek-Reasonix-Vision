@@ -42,6 +42,15 @@ func bridgeToolMessageImages(s *Session, name string) []string {
 	return nil
 }
 
+func bridgeToolMessageLocalImages(s *Session, name string) []string {
+	for i := range s.Messages {
+		if s.Messages[i].LocalOnly && s.Messages[i].Name == provider.LocalOnlyToolName && len(s.Messages[i].Images) > 0 {
+			return s.Messages[i].Images
+		}
+	}
+	return nil
+}
+
 func TestAgentToolImagesTextModelStoresVisualEvidenceNotRawImage(t *testing.T) {
 	fp := &recordingToolImageProcessor{out: vision.ToolImageOutput{
 		Text:    "read shot.png\n\n<visual-evidence schema=\"modlens-v2\">\nDIRECT_EVIDENCE:\nOCR: 错误码 500\n</visual-evidence>",
@@ -61,6 +70,9 @@ func TestAgentToolImagesTextModelStoresVisualEvidenceNotRawImage(t *testing.T) {
 	if img := bridgeToolMessageImages(sess, "shot"); len(img) != 0 {
 		t.Fatalf("text model retained raw tool image: %v", img)
 	}
+	if img := bridgeToolMessageLocalImages(sess, "shot"); len(img) != 1 || img[0] != bridgeShotDataURL {
+		t.Fatalf("text model local tool images = %v, want recoverable original image", img)
+	}
 	if content := lastToolResult(sess, "shot"); !strings.Contains(content, `schema="modlens-v2"`) || !strings.Contains(content, "错误码 500") {
 		t.Fatalf("tool message missing structured visual evidence:\n%s", content)
 	}
@@ -76,8 +88,8 @@ func TestAgentToolImagesTextModelStoresVisualEvidenceNotRawImage(t *testing.T) {
 	}
 }
 
-func TestAgentToolImagesVisionModelKeepsRawImage(t *testing.T) {
-	fp := &recordingToolImageProcessor{out: vision.ToolImageOutput{Text: "shot", Images: []string{bridgeShotDataURL}}}
+func TestAgentToolImagesVisionModelStillUsesConfiguredVisualProcessor(t *testing.T) {
+	fp := &recordingToolImageProcessor{out: vision.ToolImageOutput{Text: "visual evidence", Success: true}}
 	reg := tool.NewRegistry()
 	reg.Add(&fakeImageTool{text: "shot", images: []string{bridgeShotDataURL}})
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
@@ -89,11 +101,17 @@ func TestAgentToolImagesVisionModelKeepsRawImage(t *testing.T) {
 	if err := a.Run(context.Background(), "look"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if img := bridgeToolMessageImages(sess, "shot"); len(img) != 1 || img[0] != bridgeShotDataURL {
-		t.Fatalf("vision model tool images = %v, want raw image", img)
+	if img := bridgeToolMessageImages(sess, "shot"); len(img) != 0 {
+		t.Fatalf("vision model tool images = %v, want visual evidence without raw image", img)
+	}
+	if img := bridgeToolMessageLocalImages(sess, "shot"); len(img) != 1 || img[0] != bridgeShotDataURL {
+		t.Fatalf("vision model local tool images = %v, want recoverable original image", img)
 	}
 	if in := fp.inputs(); len(in) != 1 || !in[0].ModelSupportsImages {
-		t.Fatalf("processor input = %+v, want image-capable=true", in)
+		t.Fatalf("processor input = %+v, want configured processor to receive image-capable=true", in)
+	}
+	if content := lastToolResult(sess, "shot"); content != "visual evidence" {
+		t.Fatalf("tool message content = %q, want visual evidence", content)
 	}
 }
 

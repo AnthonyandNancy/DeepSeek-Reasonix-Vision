@@ -283,6 +283,7 @@ export function Transcript({
   rewindDisabled = false,
   running = false,
   visionProgress,
+  visionProgressHistory,
   questionNavigator = true,
   welcomeVariant = "default",
   creationMode = false,
@@ -311,6 +312,7 @@ export function Transcript({
   rewindDisabled?: boolean;
   running?: boolean;
   visionProgress?: WireVisionProgress;
+  visionProgressHistory?: WireVisionProgress[];
   questionNavigator?: boolean;
   welcomeVariant?: "default" | "creation";
   creationMode?: boolean;
@@ -326,6 +328,7 @@ export function Transcript({
   invocationMetadata?: InvocationMetadataMap;
 }) {
   const t = useT();
+  const visibleVisionProgress = visionProgressHistory?.length ? visionProgressHistory : visionProgress ? [visionProgress] : [];
   const subscribeLive = useCallback(
     (listener: () => void) => liveStore?.subscribe(tabId, listener) ?? (() => {}),
     [liveStore, tabId],
@@ -892,14 +895,20 @@ export function Transcript({
           editDisabled={rewindDisabled || !checkpoint?.canConversation}
         />,
       );
-      if (visionProgress && index === hotGroups.length - 1) {
-        out.push(<VisionProgressCard key={`vision-progress-${user.id}`} progress={visionProgress} />);
+      if (visibleVisionProgress.length > 0 && index === hotGroups.length - 1) {
+        out.push(
+          <VisionProgressCard
+            key={`vision-progress-${user.id}`}
+            progress={visionProgress}
+            history={visionProgressHistory}
+          />,
+        );
       }
       pushTurnBody(user.id, turnItems, turnIsActive);
       if (!turnIsActive) pushTurnActions(turn, turnItems);
     }
     return out;
-  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, visionProgress, onEditPrompt, onPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, turnGroups, tabId, actionHoverMenus, creationMode, lastTurn, turnStartAt, liveId, liveHasAnswerText, liveHasReasoning, t]);
+  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, visibleVisionProgress, visionProgress, visionProgressHistory, onEditPrompt, onPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, turnGroups, tabId, actionHoverMenus, creationMode, lastTurn, turnStartAt, liveId, liveHasAnswerText, liveHasReasoning, t]);
 
   // ── Assemble rendered output ──────────────────────────────────────────────
   // Warm/cold zone is a separate memo'd WarmZone component so streaming tokens
@@ -1692,33 +1701,54 @@ function PhaseCard({ text }: { text: string }) {
   return <div className="phase" data-entrance="true"><ProcessPhaseIcon size={12} /><span>{text}</span></div>;
 }
 
-export function VisionProgressCard({ progress }: { progress: VisionProgress }) {
+export function VisionProgressCard({ progress, history }: { progress?: VisionProgress; history?: VisionProgress[] }) {
   const t = useT();
-  const stageKey = `visionProgress.${progress.stage}` as never;
-  const stageLabel = progress.stage === "cancelled" ? t("common.cancel") : t(stageKey);
-  const response = progress.responseDelta?.slice(-12_000) ?? "";
-  const reasoning = progress.reasoningDelta?.slice(-8_000) ?? "";
-  const terminal = progress.stage === "ready" || progress.stage === "failed" || progress.stage === "cancelled";
+  const entries = history?.length ? history : progress ? [progress] : [];
+  const latest = entries[entries.length - 1];
+  if (!latest) return null;
+  const current = progress ?? latest;
+  let currentIndex = entries.length - 1;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index].stage === current.stage) {
+      currentIndex = index;
+      break;
+    }
+  }
+  const terminal = current.stage === "ready" || current.stage === "failed" || current.stage === "cancelled";
   return (
-    <section className={`vision-progress${terminal ? " vision-progress--terminal" : ""}`} role="status" aria-live="polite" data-stage={progress.stage}>
-      <div className="vision-progress__head">
-        <ProcessBrainIcon size={13} aria-hidden="true" />
-        <span className="vision-progress__stage">{stageLabel}</span>
-        {progress.modelRef && <code className="vision-progress__model">{progress.modelRef}</code>}
-        {typeof progress.elapsedMs === "number" && <span className="vision-progress__elapsed">{Math.round(progress.elapsedMs / 100) / 10}s</span>}
-      </div>
-      {response && (
-        <details className="vision-progress__section" open={!terminal}>
-          <summary>{t("visionProgress.response")}</summary>
-          <pre>{response}</pre>
-        </details>
-      )}
-      {reasoning && (
-        <details className="vision-progress__section" open={!terminal}>
-          <summary>{t("visionProgress.thinking")}</summary>
-          <pre>{reasoning}</pre>
-        </details>
-      )}
+    <section className={`vision-progress${terminal ? " vision-progress--terminal" : ""}`} role="status" aria-live="polite" data-stage={current.stage}>
+      {entries.map((entry, index) => {
+        const stageKey = ("visionProgress." + entry.stage) as never;
+        const stageLabel = entry.stage === "cancelled" ? t("task.state.cancelled") : t(stageKey);
+        const isCurrent = index === currentIndex;
+        const activeStage = isCurrent && !terminal;
+        const stageDetail = activeStage ? stageLabel + " · " + t("todo.inProgress") : !isCurrent ? stageLabel + " · " + t("msg.thinkingDone") : stageLabel;
+        const response = entry.responseDelta?.slice(-12_000) ?? "";
+        const reasoning = entry.reasoningDelta?.slice(-8_000) ?? "";
+        return (
+          <div className="vision-progress__step" key={entry.stage + "-" + index}>
+            <div className="vision-progress__head">
+              <ProcessBrainIcon size={13} aria-hidden="true" />
+              <span className="vision-progress__stage">{stageLabel}</span>
+              {entry.modelRef && <code className="vision-progress__model">{entry.modelRef}</code>}
+              {isCurrent && typeof entry.elapsedMs === "number" && <span className="vision-progress__elapsed">{Math.round(entry.elapsedMs / 100) / 10}s</span>}
+            </div>
+            <div className="vision-progress__detail">{stageDetail}</div>
+            {response && (
+              <details className="vision-progress__section" open={isCurrent && !terminal}>
+                <summary>{t("visionProgress.response")}</summary>
+                <pre>{response}</pre>
+              </details>
+            )}
+            {reasoning && (
+              <details className="vision-progress__section" open={isCurrent && !terminal}>
+                <summary>{t("visionProgress.thinking")}</summary>
+                <pre>{reasoning}</pre>
+              </details>
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }

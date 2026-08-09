@@ -39,6 +39,12 @@ func (c *Controller) withCapabilityRoute(ctx context.Context, composed, routeInp
 	if block == "" {
 		return composed
 	}
+	if strings.HasPrefix(strings.TrimLeft(composed, " \t\r\n"), "<visual-model-assistance") {
+		if end := strings.Index(composed, "</visual-model-assistance>"); end >= 0 {
+			end += len("</visual-model-assistance>")
+			return composed[:end] + "\n\n" + block + "\n\n" + strings.TrimLeft(composed[end:], " \t\r\n")
+		}
+	}
 	return block + "\n\n" + composed
 }
 

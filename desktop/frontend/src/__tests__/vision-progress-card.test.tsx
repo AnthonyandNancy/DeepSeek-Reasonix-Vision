@@ -36,6 +36,29 @@ if (!document.body.textContent?.includes("visible")) throw new Error("vision car
 if (!document.body.textContent?.includes("checking pixels")) throw new Error("vision card must show safe reasoning output");
 if (document.querySelectorAll("details[open]").length < 2) throw new Error("active vision reasoning and response sections must be open");
 
+await act(async () => {
+  root.render(React.createElement(LocaleProvider, null, React.createElement(VisionProgressCard, {
+    history: [
+      { stage: "preparing", modelRef: "vision/model" },
+      { stage: "connecting", modelRef: "vision/model" },
+      { stage: "waiting", modelRef: "vision/model" },
+    ],
+  })));
+});
+if (document.querySelectorAll(".vision-progress__detail").length !== 3) throw new Error("every vision lifecycle stage must explain its current work");
+const lifecycleCopy = document.body.textContent ?? "";
+const activeCopyCount = (lifecycleCopy.match(/In progress|进行中|進行中/g) ?? []).length;
+if (activeCopyCount > 1) throw new Error("historical vision stages must not remain labeled as active");
+
+await act(async () => {
+  root.render(React.createElement(LocaleProvider, null, React.createElement(VisionProgressCard, {
+    history: [{ stage: "cancelled", detail: "authentication_failed" }],
+  })));
+});
+const cancelledCopy = document.body.textContent ?? "";
+if (!cancelledCopy.includes("Cancelled") && !cancelledCopy.includes("已取消")) throw new Error("cancelled vision stage must use the localized state label");
+if (document.body.textContent?.includes("authentication_failed")) throw new Error("raw provider detail enums must not leak into localized progress copy");
+
 await act(async () => root.unmount());
 dom.window.close();
 process.stdout.write("vision progress card: passed\n");

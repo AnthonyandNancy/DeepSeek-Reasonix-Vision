@@ -2,6 +2,7 @@ package vision
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -50,9 +51,6 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 	if len(in.Images) == 0 {
 		return ToolImageOutput{Text: in.ToolText, Images: in.Images}
 	}
-	if in.ModelSupportsImages {
-		return ToolImageOutput{Text: in.ToolText, Images: in.Images}
-	}
 	toolName := strings.TrimSpace(in.ToolName)
 	if toolName == "" {
 		toolName = "unknown"
@@ -62,6 +60,9 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 		maxText = DefaultToolResultTextBytes
 	}
 	if p == nil || p.describer == nil || strings.TrimSpace(p.modelRef) == "" {
+		if in.ModelSupportsImages {
+			return ToolImageOutput{Text: in.ToolText, Images: in.Images}
+		}
 		if p != nil {
 			p.emitProgress(event.VisionStageFailed, "model_unavailable")
 		}
@@ -77,6 +78,7 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 		if err == nil {
 			evidence := RenderEvidenceContextWithin(ev, "tool:"+toolName, maxToolEvidenceBytes)
 			final := appendBoundedToolBlock(in.ToolText, "\n\n", evidence, "\n", maxText)
+			p.emitProgress(event.VisionStageReady, "")
 			return ToolImageOutput{Text: final, Images: nil, Success: true, Attempts: attempts, Debug: evidence}
 		}
 		lastErr = err
@@ -88,7 +90,11 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 	if ctx.Err() != nil {
 		detail = visionFailureDetail(ctx.Err())
 	}
-	p.emitProgress(event.VisionStageFailed, detail)
+	stage := event.VisionStageFailed
+	if errors.Is(ctx.Err(), context.Canceled) || (errors.Is(lastErr, context.Canceled) && !errors.Is(lastErr, context.DeadlineExceeded)) {
+		stage = event.VisionStageCancelled
+	}
+	p.emitProgress(stage, detail)
 	return ToolImageOutput{Text: AppendToolImageStatusWithin(in.ToolText, toolName, maxText), Images: nil, Attempts: attempts, Debug: fmt.Sprintf("vision evidence failed after %d attempt(s)", attempts)}
 }
 

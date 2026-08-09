@@ -91,6 +91,7 @@ type callContextKey struct{}
 type parentSessionContextKey struct{}
 type subagentDepthContextKey struct{}
 type userImagesContextKey struct{}
+type userMediaRefsContextKey struct{}
 type directImageTurnContextKey struct{}
 
 // callContext is the per-call context a tool can read. parentID is the call being
@@ -180,16 +181,51 @@ func WithUserImages(ctx context.Context, images []string) context.Context {
 	return context.WithValue(ctx, userImagesContextKey{}, images)
 }
 
+// WithUserMediaRefs carries host-resolved, workspace-scoped media references
+// for persistence on the user message. References are deliberately separate
+// from Images: the latter are provider payload bytes, while these refs let a
+// later host-owned re-analysis recover an image even after a provider request
+// or an old session loader discarded the bytes. The refs are stripped before
+// any provider request is built.
+func WithUserMediaRefs(ctx context.Context, refs []string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(refs) == 0 {
+		return context.WithValue(ctx, userMediaRefsContextKey{}, []string(nil))
+	}
+	out := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		out = append(out, ref)
+	}
+	return context.WithValue(ctx, userMediaRefsContextKey{}, out)
+}
+
 // WithoutUserImages prevents child agents from inheriting raw images or the
 // root turn's direct-image routing marker.
 func WithoutUserImages(ctx context.Context) context.Context {
 	ctx = WithUserImages(ctx, nil)
+	ctx = WithUserMediaRefs(ctx, nil)
 	return WithDirectImageTurn(ctx, false)
 }
 
 func userImages(ctx context.Context) []string {
 	images, _ := ctx.Value(userImagesContextKey{}).([]string)
 	return images
+}
+
+func userMediaRefs(ctx context.Context) []string {
+	refs, _ := ctx.Value(userMediaRefsContextKey{}).([]string)
+	return refs
 }
 
 // WithDirectImageTurn marks a turn whose raw images are being sent to the
@@ -2303,6 +2339,25 @@ func (a *Agent) prepareSamplingRequest(ctx context.Context) (samplingRequest, er
 	// transport copy so wall-clock differences never invalidate the provider's
 	// prompt-cache prefix (and custom providers cannot accidentally send it).
 	requestMessages := append([]provider.Message(nil), provider.ModelMessages(a.session.Messages)...)
+	// Capability routing, visual-model assistance, and image availability
+	// statuses are current-turn controls. They are persisted for UI/recovery,
+	// but an older turn's controls must not instruct the next turn to call a
+	// stale capability (especially use_capability for a prior image request).
+	activeStart := -1
+	if createdAt := a.activeTurnCreatedAt.Load(); createdAt != 0 {
+		// Unix-millisecond timestamps can collide for two very fast turns.
+		// Search from the tail so the boundary always resolves to the user
+		// message that was appended for this run, not an older same-timestamp
+		// message.
+		for i := len(requestMessages) - 1; i >= 0; i-- {
+			message := requestMessages[i]
+			if message.Role == provider.RoleUser && message.CreatedAt == createdAt {
+				activeStart = i
+				break
+			}
+		}
+	}
+	requestMessages = StripHistoricalTransientUserBlocks(requestMessages, activeStart)
 	for i := range requestMessages {
 		requestMessages[i].CreatedAt = 0
 	}

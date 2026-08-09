@@ -25,6 +25,10 @@ var TransientUserBlockTags = []string{
 	"autoresearch-runtime",
 	"hook-context",
 	"capability-route",
+	"visual-model-assistance",
+	"visual-reanalysis-status",
+	"direct-visual-input-status",
+	"image-processing-status",
 	"interrupted-turn-recovery",
 }
 
@@ -97,6 +101,78 @@ func StripTransientUserBlocks(content string) string {
 	s = stripTrailingDeliveryRuntime(s)
 	s = stripTrailingMemoryRecall(s)
 	return strings.TrimLeft(s, " \t\r\n")
+}
+
+// StripHistoricalTransientUserBlocks removes host-owned, per-turn context from
+// user messages belonging to earlier turns while leaving the active turn
+// untouched. The current turn must retain its capability route and visual
+// context across every tool round; older routes are ephemeral requests and
+// must not become instructions for a later user message.
+//
+// The function returns a copy only when a historical message changes. It never
+// mutates the session slice or its messages in place. activeStart is the index
+// of the current turn's first user message after provider-only records have
+// been filtered; -1 means no active boundary is known, so the input is left
+// untouched rather than risking removal from a live turn.
+func StripHistoricalTransientUserBlocks(msgs []provider.Message, activeStart int) []provider.Message {
+	if activeStart < 0 || activeStart >= len(msgs) {
+		return msgs
+	}
+	var out []provider.Message
+	for i, msg := range msgs {
+		if i >= activeStart || msg.Role != provider.RoleUser || msg.Content == "" {
+			continue
+		}
+		clean := stripHistoricalTransientUserContent(msg.Content)
+		if clean == msg.Content {
+			continue
+		}
+		if out == nil {
+			out = append([]provider.Message(nil), msgs...)
+		}
+		out[i].Content = clean
+	}
+	if out == nil {
+		return msgs
+	}
+	return out
+}
+
+// stripHistoricalTransientUserContent also removes a reserved host block that
+// was appended after the user's text. Most runtime blocks are prepended, but
+// image-processing-status is deliberately a trailing degradation notice in
+// older sessions. Keep the ordinary preview function's conservative
+// user-prose behavior while handling that legacy suffix for provider replay.
+func stripHistoricalTransientUserContent(content string) string {
+	s := StripTransientUserBlocks(content)
+	for {
+		trimmed := strings.TrimRight(s, " \t\r\n")
+		removed := false
+		for _, tag := range TransientUserBlockTags {
+			closeTag := "</" + tag + ">"
+			if !strings.HasSuffix(trimmed, closeTag) {
+				continue
+			}
+			open := "<" + tag
+			idx := strings.LastIndex(trimmed, open)
+			if idx < 0 {
+				continue
+			}
+			// Ensure the apparent opening token is actually a tag, not prose
+			// such as "mention <image-processing-statuses>".
+			after := trimmed[idx+len(open):]
+			if !strings.HasPrefix(after, ">") && !strings.HasPrefix(after, " ") && !strings.HasPrefix(after, "\t") {
+				continue
+			}
+			trimmed = strings.TrimRight(trimmed[:idx], " \t\r\n")
+			removed = true
+			break
+		}
+		if !removed {
+			return strings.TrimSpace(trimmed)
+		}
+		s = trimmed
+	}
 }
 
 func stripTrailingMemoryRecall(s string) string {

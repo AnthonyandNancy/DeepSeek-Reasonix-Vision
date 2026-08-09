@@ -140,8 +140,8 @@ func TestSubmitSlashSubagentRunsIsolatedAndPersistsDistilledAnswer(t *testing.T)
 	if len(msgs) != 3 || msgs[1].Role != provider.RoleUser || msgs[2].Role != provider.RoleAssistant {
 		t.Fatalf("parent history = %+v, want system/user/assistant", msgs)
 	}
-	if !strings.Contains(msgs[1].Content, "inspect auth") || strings.Contains(msgs[1].Content, gotSkill.Body) {
-		t.Fatalf("parent user message should contain the task but not child system prompt: %q", msgs[1].Content)
+	if !strings.Contains(msgs[1].Content, "inspect auth") || strings.Contains(msgs[1].Content, gotSkill.Body) || msgs[1].RawContent != "/helper inspect auth" {
+		t.Fatalf("parent user message content=%q raw=%q, want task without child prompt plus original slash input", msgs[1].Content, msgs[1].RawContent)
 	}
 	if msgs[2].Content != "isolated answer" {
 		t.Fatalf("parent distilled answer = %q", msgs[2].Content)

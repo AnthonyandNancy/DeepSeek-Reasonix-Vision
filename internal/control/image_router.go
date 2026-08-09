@@ -18,9 +18,31 @@ const (
 )
 
 const directUserImageEvidenceReady = `<direct-visual-input-status>
-The attached user image(s) were already analyzed by the configured visual evidence model.
-Use the ModLens v2 evidence below for this turn. Do not call an image or vision MCP tool for these same user attachments.
+The attached user image(s) were already analyzed by the configured independent visual model.
+Use the ModLens v2 evidence below as visual context for this turn.
+The host owns ordinary media analysis for this turn; do not infer pixels from a filename, path, or metadata.
+If the user explicitly requests a fresh analysis, the host will rerun the independent visual model on recoverable media.
 </direct-visual-input-status>`
+
+func visualModelAssistanceBlock(modelRef string) string {
+	return fmt.Sprintf(`<visual-model-assistance version="1">
+The application has a configured independent visual model: %s.
+For ordinary media, the host routes image bytes to this model before the main model reasons.
+When an application media tool returns image data, the host sends that media to the independent visual model for analysis.
+Use the resulting ModLens v2 visual evidence as the visual context for this task; do not infer pixels from a filename or path.
+</visual-model-assistance>`, strings.TrimSpace(modelRef))
+}
+
+func (c *Controller) injectVisualModelAssistance(input string) string {
+	if c == nil || c.visionModelRefOr() == "" {
+		return input
+	}
+	block := visualModelAssistanceBlock(c.visionModelRefOr())
+	if strings.TrimSpace(input) == "" {
+		return block
+	}
+	return block + "\n\n" + input
+}
 
 type ImageRouteMode uint8
 
@@ -39,8 +61,9 @@ type ImageRouteResult struct {
 	VisionUsage *provider.Usage
 }
 type ImageRouteState struct {
-	Resolved       bool
-	VisionAttempts int
+	Resolved                 bool
+	VisionAttempts           int
+	RequireIndependentVision bool
 }
 type VisionModelStatusKind uint8
 
@@ -58,6 +81,10 @@ type VisionModelStatus struct {
 
 func (c *Controller) mainModelSupportsVision() bool { return c.imageInputEnabled() }
 func (c *Controller) visionModelRefOr() string      { return strings.TrimSpace(c.visionModelRef) }
+
+// VisionModelRef returns the provider/model reference for visual evidence.
+func (c *Controller) VisionModelRef() string { return c.visionModelRef }
+
 func (c *Controller) resolveVisionModelStatus() VisionModelStatus {
 	ref := c.visionModelRefOr()
 	if ref == "" {
@@ -112,43 +139,50 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 		state.Resolved = true
 		return pathOnlyResult(input, images, "one or more images were unreadable or unsupported")
 	}
-	if c.mainModelSupportsVision() {
+	status := c.resolveVisionModelStatus()
+	if status.Kind == VisionModelSupported && c.visionDescriber != nil {
+		visionImages := toVisionImages(images)
+		for state.VisionAttempts < maxVisionAttemptsPerTurn {
+			state.VisionAttempts++
+			c.emitVisionRouteProgress(status.ModelRef)
+			ev, usage, err := c.visionDescriber.DescribeOnce(ctx, status.ModelRef, visionImages, rawQuestion)
+			if err == nil {
+				state.Resolved = true
+				evidence := vision.RenderEvidenceContextWithin(ev, "user-attachment", maxUserVisionEvidenceBytes)
+				final := joinVisualEvidenceInput(stripResolvedUserImageContext(input, images), evidence)
+				return ImageRouteResult{Mode: ImageRouteVisionEvidence, Input: final, Images: nil, VisionUsage: usage}
+			}
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		if ctx.Err() != nil || state.VisionAttempts >= maxVisionAttemptsPerTurn {
+			state.Resolved = true
+			if c.mainModelSupportsVision() && !state.RequireIndependentVision {
+				return ImageRouteResult{Mode: ImageRouteDirectMain, Input: input, Images: imageDataURLs(images), Notice: "visual evidence extraction failed; using the vision-capable main model"}
+			}
+			return pathOnlyResult(input, images, fmt.Sprintf("visual evidence extraction failed after %d attempt(s)", state.VisionAttempts))
+		}
+	}
+	if c.mainModelSupportsVision() && !state.RequireIndependentVision {
 		state.Resolved = true
 		return ImageRouteResult{Mode: ImageRouteDirectMain, Input: input, Images: imageDataURLs(images)}
 	}
-	status := c.resolveVisionModelStatus()
 	switch status.Kind {
 	case VisionModelNotConfigured:
-		state.Resolved = true
-		return pathOnlyResult(input, images, "the main model is text-only and no vision evidence model is configured")
+		return markPathOnly(state, input, images, "the main model is text-only and no vision evidence model is configured")
 	case VisionModelUnavailable:
-		state.Resolved = true
-		return pathOnlyResult(input, images, "the configured vision evidence model is unavailable")
+		return markPathOnly(state, input, images, "the configured vision evidence model is unavailable")
 	case VisionModelUnsupported:
-		state.Resolved = true
-		return pathOnlyResult(input, images, fmt.Sprintf("the configured vision evidence model %q is not marked as image-capable", status.ModelRef))
+		return markPathOnly(state, input, images, fmt.Sprintf("the configured vision evidence model %q is not marked as image-capable", status.ModelRef))
+	default:
+		return markPathOnly(state, input, images, "the vision evidence extractor is not wired")
 	}
-	if c.visionDescriber == nil {
-		state.Resolved = true
-		return pathOnlyResult(input, images, "the vision evidence extractor is not wired")
-	}
-	visionImages := toVisionImages(images)
-	for state.VisionAttempts < maxVisionAttemptsPerTurn {
-		state.VisionAttempts++
-		c.emitVisionRouteProgress(status.ModelRef)
-		ev, usage, err := c.visionDescriber.DescribeOnce(ctx, status.ModelRef, visionImages, rawQuestion)
-		if err == nil {
-			state.Resolved = true
-			evidence := vision.RenderEvidenceContextWithin(ev, "user-attachment", maxUserVisionEvidenceBytes)
-			final := joinVisualEvidenceInput(stripResolvedUserImageContext(input, images), evidence)
-			return ImageRouteResult{Mode: ImageRouteVisionEvidence, Input: final, Images: nil, VisionUsage: usage}
-		}
-		if ctx.Err() != nil {
-			break
-		}
-	}
+}
+
+func markPathOnly(state *ImageRouteState, input string, images []ResolvedImage, notice string) ImageRouteResult {
 	state.Resolved = true
-	return pathOnlyResult(input, images, fmt.Sprintf("visual evidence extraction failed after %d attempt(s)", state.VisionAttempts))
+	return pathOnlyResult(input, images, notice)
 }
 
 func joinVisualEvidenceInput(input, evidence string) string {

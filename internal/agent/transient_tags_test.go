@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"testing"
+
+	"reasonix/internal/provider"
 )
 
 // Every tag the host prepends must strip cleanly, whatever else precedes it.
@@ -70,5 +72,60 @@ func TestHasLeadingInjectedBlockIgnoresUserProse(t *testing.T) {
 	}
 	if hasLeadingInjectedBlock("<active-goal>\ng\n</active-goal>\n\nplain text", "reasoning-language") {
 		t.Fatal("walking past other blocks must not invent a target block")
+	}
+}
+
+func TestStripHistoricalTransientUserBlocksKeepsActiveTurnAndEvidence(t *testing.T) {
+	old := `<capability-route version="1">
+old route
+</capability-route>
+
+<visual-model-assistance version="1">
+old host guidance
+</visual-model-assistance>
+
+<direct-visual-input-status>
+old direct status
+</direct-visual-input-status>
+
+<visual-evidence schema="modlens-v2">
+old evidence
+</visual-evidence>
+
+old request
+<image-processing-status>
+old unavailable status
+</image-processing-status>`
+	active := `<capability-route version="1">
+current route
+</capability-route>
+
+<visual-model-assistance version="1">
+current host guidance
+</visual-model-assistance>
+
+current request`
+	msgs := []provider.Message{
+		{Role: provider.RoleSystem, Content: "system"},
+		{Role: provider.RoleUser, Content: old},
+		{Role: provider.RoleAssistant, Content: "old answer"},
+		{Role: provider.RoleUser, Content: active},
+	}
+
+	got := StripHistoricalTransientUserBlocks(msgs, 3)
+	if strings.Contains(got[1].Content, "<capability-route") || strings.Contains(got[1].Content, "<visual-model-assistance") || strings.Contains(got[1].Content, "<direct-visual-input-status") {
+		t.Fatalf("historical transient blocks leaked: %q", got[1].Content)
+	}
+	if !strings.Contains(got[1].Content, `<visual-evidence schema="modlens-v2">`) || !strings.Contains(got[1].Content, "old request") {
+		t.Fatalf("historical visual evidence or user text was removed: %q", got[1].Content)
+	}
+	if strings.Contains(got[1].Content, "old unavailable status") {
+		t.Fatalf("trailing historical image status leaked: %q", got[1].Content)
+	}
+	if got[3].Content != active {
+		t.Fatalf("active-turn route changed: %q", got[3].Content)
+	}
+	if strings.Contains(msgs[1].Content, "old route") == false || !strings.Contains(msgs[1].Content, "<capability-route") {
+		t.Fatal("input session messages were mutated")
 	}
 }

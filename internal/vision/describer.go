@@ -78,17 +78,17 @@ func (d *ProviderDescriber) DescribeOnce(ctx context.Context, modelRef string, i
 	if len(images) == 0 {
 		return Evidence{}, nil, errors.New("vision: no images to extract")
 	}
-	return d.describe(ctx, modelRef, modLensV2SystemPrompt, buildVisionUserPrompt(userQuestion, images), images)
+	return d.describe(ctx, modelRef, modLensV2SystemPrompt, buildVisionUserPrompt(userQuestion, images), images, true)
 }
 
 func (d *ProviderDescriber) DescribeToolImagesOnce(ctx context.Context, modelRef string, in ToolImageDescribeInput) (Evidence, *provider.Usage, error) {
 	if len(in.Images) == 0 {
 		return Evidence{}, nil, errors.New("vision: no tool images to extract")
 	}
-	return d.describe(ctx, modelRef, modLensV2SystemPrompt+toolImageSuffix, buildToolImagePrompt(in), in.Images)
+	return d.describe(ctx, modelRef, modLensV2SystemPrompt+toolImageSuffix, buildToolImagePrompt(in), in.Images, false)
 }
 
-func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt, userPrompt string, images []Image) (Evidence, *provider.Usage, error) {
+func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt, userPrompt string, images []Image, emitTerminal bool) (Evidence, *provider.Usage, error) {
 	if d == nil || d.prov == nil {
 		return Evidence{}, nil, errors.New("vision: describer unavailable")
 	}
@@ -112,7 +112,7 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 	d.emitProgress(modelRef, event.VisionStageConnecting, started, "", "", "")
 	ch, err := d.prov.Stream(visionCtx, req)
 	if err != nil {
-		d.emitProgress(modelRef, event.VisionStageFailed, started, "", "", visionFailureDetail(err))
+		d.emitTerminalProgress(emitTerminal, modelRef, event.VisionStageFailed, started, visionFailureDetail(err))
 		return Evidence{}, nil, fmt.Errorf("vision: %w", err)
 	}
 	d.emitProgress(modelRef, event.VisionStageWaiting, started, "", "", "")
@@ -125,7 +125,7 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 			d.emitProgress(modelRef, event.VisionStageResponse, started, chunk.Text, "", "")
 			if text.Len() > MaxEvidenceOutputBytes {
 				cancel()
-				d.emitProgress(modelRef, event.VisionStageFailed, started, "", "", "output_limit")
+				d.emitTerminalProgress(emitTerminal, modelRef, event.VisionStageFailed, started, "output_limit")
 				return Evidence{}, nil, fmt.Errorf("vision: output exceeded %d bytes", MaxEvidenceOutputBytes)
 			}
 		case provider.ChunkReasoning:
@@ -133,7 +133,7 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 				d.emitProgress(modelRef, event.VisionStageThinking, started, "", chunk.Text, "")
 			}
 		case provider.ChunkToolCallStart, provider.ChunkToolCallArgsDelta, provider.ChunkToolCall:
-			d.emitProgress(modelRef, event.VisionStageFailed, started, "", "", "unexpected_tool_call")
+			d.emitTerminalProgress(emitTerminal, modelRef, event.VisionStageFailed, started, "unexpected_tool_call")
 			return Evidence{}, nil, ErrUnexpectedVisionToolCall
 		case provider.ChunkUsage:
 			if chunk.Usage != nil {
@@ -142,10 +142,10 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 			}
 		case provider.ChunkError:
 			if chunk.Err != nil {
-				d.emitProgress(modelRef, event.VisionStageFailed, started, "", "", visionFailureDetail(chunk.Err))
+				d.emitTerminalProgress(emitTerminal, modelRef, event.VisionStageFailed, started, visionFailureDetail(chunk.Err))
 				return Evidence{}, nil, chunk.Err
 			}
-			d.emitProgress(modelRef, event.VisionStageFailed, started, "", "", "provider_error")
+			d.emitTerminalProgress(emitTerminal, modelRef, event.VisionStageFailed, started, "provider_error")
 			return Evidence{}, nil, errors.New("vision: stream error")
 		}
 	}
@@ -154,20 +154,26 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 		if errors.Is(visionCtx.Err(), context.Canceled) && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			stage = event.VisionStageCancelled
 		}
-		d.emitProgress(modelRef, stage, started, "", "", visionFailureDetail(visionCtx.Err()))
+		d.emitTerminalProgress(emitTerminal, modelRef, stage, started, visionFailureDetail(visionCtx.Err()))
 		return Evidence{}, nil, visionCtx.Err()
 	}
 	d.emitProgress(modelRef, event.VisionStageParsing, started, "", "", "")
 	evidence, err := ParseEvidence(text.String())
 	if err != nil {
-		d.emitProgress(modelRef, event.VisionStageFailed, started, "", "", "invalid_modlens_output")
+		d.emitTerminalProgress(emitTerminal, modelRef, event.VisionStageFailed, started, "invalid_modlens_output")
 		return Evidence{}, nil, err
 	}
-	d.emitProgress(modelRef, event.VisionStageReady, started, "", "", "")
+	d.emitTerminalProgress(emitTerminal, modelRef, event.VisionStageReady, started, "")
 	if usage != nil && d.sink != nil {
 		d.sink.Emit(event.Event{Kind: event.Usage, ModelRef: modelRef, Usage: usage, Pricing: d.pricing, UsageSource: event.UsageSourceVision, Source: event.UsageSourceVision})
 	}
 	return evidence, usage, nil
+}
+
+func (d *ProviderDescriber) emitTerminalProgress(enabled bool, modelRef string, stage event.VisionProgressStage, started time.Time, detail string) {
+	if enabled {
+		d.emitProgress(modelRef, stage, started, "", "", detail)
+	}
 }
 
 func (d *ProviderDescriber) emitProgress(modelRef string, stage event.VisionProgressStage, started time.Time, responseDelta, reasoningDelta, detail string) {
