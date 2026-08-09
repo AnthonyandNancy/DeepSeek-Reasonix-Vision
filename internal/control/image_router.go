@@ -152,12 +152,17 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 			AnalysisID: analysisID,
 			Initiator:  vision.AnalysisInitiatorHostAuto, MediaCount: len(visionImages), Observe: recorder.Observe,
 		})
+		emitsProgress := vision.DescriberEmitsVisionProgress(c.visionDescriber)
 		for state.VisionAttempts < maxVisionAttemptsPerTurn {
 			state.VisionAttempts++
-			c.emitVisionRouteProgress(analysisCtx, status.ModelRef)
+			if !emitsProgress {
+				vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: event.VisionStagePreparing, ModelRef: status.ModelRef})
+			}
 			ev, usage, err := c.visionDescriber.DescribeOnce(analysisCtx, status.ModelRef, visionImages, rawQuestion)
 			if err == nil {
-				vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: event.VisionStageReady, ModelRef: status.ModelRef})
+				if !emitsProgress {
+					vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: event.VisionStageReady, ModelRef: status.ModelRef})
+				}
 				state.Resolved = true
 				evidence := vision.RenderEvidenceContextWithin(ev, "user-attachment", maxUserVisionEvidenceBytes)
 				final := joinVisualEvidenceInput(stripResolvedUserImageContext(input, images), evidence)
@@ -166,11 +171,13 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 					VisualAnalyses: []provider.VisualAnalysisRecord{recorder.Snapshot(ev, evidence)},
 				}
 			}
-			stage := event.VisionStageFailed
-			if ctx.Err() != nil {
-				stage = event.VisionStageCancelled
+			if !emitsProgress {
+				stage := event.VisionStageFailed
+				if ctx.Err() != nil {
+					stage = event.VisionStageCancelled
+				}
+				vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: stage, ModelRef: status.ModelRef, Detail: "request_failed"})
 			}
-			vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: stage, ModelRef: status.ModelRef, Detail: "request_failed"})
 			if ctx.Err() != nil {
 				break
 			}
@@ -244,12 +251,6 @@ func stripResolvedUserImageContext(input string, images []ResolvedImage) string 
 	return strings.TrimSpace(cleaned)
 }
 
-func (c *Controller) emitVisionRouteProgress(ctx context.Context, modelRef string) {
-	if c == nil {
-		return
-	}
-	vision.EmitProgress(ctx, c.sink, event.VisionProgressInfo{Stage: event.VisionStagePreparing, ModelRef: modelRef})
-}
 func pathOnlyResult(input string, images []ResolvedImage, notice string) ImageRouteResult {
 	return ImageRouteResult{Mode: ImageRoutePathOnly, Input: injectImageUnavailableContext(input, images, notice), Notice: notice}
 }

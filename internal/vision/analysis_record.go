@@ -38,7 +38,6 @@ type progressScopeState struct {
 	mu      sync.Mutex
 	config  ProgressScope
 	attempt int
-	last    event.VisionProgressStage
 }
 
 func WithProgressScope(ctx context.Context, scope ProgressScope) context.Context {
@@ -57,9 +56,7 @@ func emitProgressEvent(ctx context.Context, sink event.Sink, info event.VisionPr
 		if info.Attempt > 0 {
 			scope.attempt = info.Attempt
 		} else if info.Stage == event.VisionStagePreparing {
-			if scope.attempt == 0 || isTerminalVisionStage(scope.last) {
-				scope.attempt++
-			}
+			scope.attempt++
 		} else if scope.attempt == 0 {
 			scope.attempt = 1
 		}
@@ -67,7 +64,6 @@ func emitProgressEvent(ctx context.Context, sink event.Sink, info event.VisionPr
 		info.Initiator = scope.config.Initiator
 		info.MediaCount = scope.config.MediaCount
 		info.Attempt = scope.attempt
-		scope.last = info.Stage
 		observe := scope.config.Observe
 		scope.mu.Unlock()
 		if observe != nil {
@@ -86,10 +82,6 @@ func emitProgressEvent(ctx context.Context, sink event.Sink, info event.VisionPr
 // EmitProgress publishes one scoped visual-analysis lifecycle update.
 func EmitProgress(ctx context.Context, sink event.Sink, info event.VisionProgressInfo) {
 	emitProgressEvent(ctx, sink, info)
-}
-
-func isTerminalVisionStage(stage event.VisionProgressStage) bool {
-	return stage == event.VisionStageReady || stage == event.VisionStageFailed || stage == event.VisionStageCancelled
 }
 
 const (

@@ -30,6 +30,15 @@ type Describer interface {
 	DescribeToolImagesOnce(ctx context.Context, modelRef string, in ToolImageDescribeInput) (Evidence, *provider.Usage, error)
 }
 
+type progressEmittingDescriber interface {
+	EmitsVisionProgress() bool
+}
+
+func DescriberEmitsVisionProgress(d Describer) bool {
+	emitter, ok := d.(progressEmittingDescriber)
+	return ok && emitter.EmitsVisionProgress()
+}
+
 var ErrUnexpectedVisionToolCall = errors.New("vision model returned an unexpected tool call")
 
 const (
@@ -73,6 +82,8 @@ type ProviderDescriber struct {
 func NewProviderDescriber(prov provider.Provider, pricing *provider.Pricing, sink event.Sink) *ProviderDescriber {
 	return &ProviderDescriber{prov: prov, pricing: pricing, sink: sink, timeout: defaultTimeout}
 }
+
+func (*ProviderDescriber) EmitsVisionProgress() bool { return true }
 
 func (d *ProviderDescriber) DescribeOnce(ctx context.Context, modelRef string, images []Image, userQuestion string) (Evidence, *provider.Usage, error) {
 	if len(images) == 0 {

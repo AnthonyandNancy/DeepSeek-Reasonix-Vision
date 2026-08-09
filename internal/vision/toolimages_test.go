@@ -16,6 +16,25 @@ type fakeEvidenceDescriber struct {
 	err      error
 }
 
+type retryToolVisionProvider struct {
+	calls int
+}
+
+func (p *retryToolVisionProvider) Name() string { return "retry-tool-vision" }
+func (p *retryToolVisionProvider) Stream(_ context.Context, _ provider.Request) (<-chan provider.Chunk, error) {
+	p.calls++
+	chunks := []provider.Chunk{{Type: provider.ChunkError, Err: errors.New("retry")}}
+	if p.calls == 2 {
+		chunks = []provider.Chunk{{Type: provider.ChunkText, Text: validEvidenceJSON()}}
+	}
+	ch := make(chan provider.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		ch <- chunk
+	}
+	close(ch)
+	return ch, nil
+}
+
 func (f *fakeEvidenceDescriber) DescribeOnce(context.Context, string, []Image, string) (Evidence, *provider.Usage, error) {
 	f.calls++
 	return f.evidence, nil, f.err
@@ -95,6 +114,45 @@ func TestToolImageProcessorUsesStructuredVisionProgress(t *testing.T) {
 	}
 	if analysisID == "" {
 		t.Fatal("tool image progress has no analysis id")
+	}
+}
+
+func TestToolImageProcessorStartsOneScopedAttemptPerRetry(t *testing.T) {
+	prov := &retryToolVisionProvider{}
+	var events []event.Event
+	sink := event.FuncSink(func(e event.Event) { events = append(events, e) })
+	d := NewProviderDescriber(prov, nil, sink)
+	p := NewToolImageProcessor("p/vision", d, sink)
+	p.maxAttempts = 2
+	out := p.ProcessToolImages(context.Background(), ToolImageInput{
+		ToolName: "browser", ToolText: "shot", Images: []string{"data:image/png;base64,AA=="},
+	})
+	if !out.Success || prov.calls != 2 || len(out.VisualAnalyses) != 1 {
+		t.Fatalf("out=%+v provider calls=%d", out, prov.calls)
+	}
+	preparing := 0
+	maxAttempt := 0
+	for _, e := range events {
+		if e.Kind != event.VisionProgress || e.VisionProgress == nil {
+			continue
+		}
+		if e.VisionProgress.Stage == event.VisionStagePreparing {
+			preparing++
+		}
+		if e.VisionProgress.Attempt > maxAttempt {
+			maxAttempt = e.VisionProgress.Attempt
+		}
+	}
+	if preparing != 2 || maxAttempt != 2 {
+		t.Fatalf("preparing=%d max attempt=%d events=%+v", preparing, maxAttempt, events)
+	}
+	for _, stage := range out.VisualAnalyses[0].Stages {
+		if stage.Attempt > maxAttempt {
+			maxAttempt = stage.Attempt
+		}
+	}
+	if maxAttempt != 2 {
+		t.Fatalf("recorded attempts = %+v, want attempt 2", out.VisualAnalyses[0].Stages)
 	}
 }
 

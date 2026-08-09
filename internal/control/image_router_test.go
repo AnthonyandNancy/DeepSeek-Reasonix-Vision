@@ -19,6 +19,21 @@ type routeEvidenceDescriber struct {
 	imageBatches [][]vision.Image
 }
 
+type routeLifecycleProvider struct {
+	streamErr error
+}
+
+func (p *routeLifecycleProvider) Name() string { return "route-lifecycle" }
+func (p *routeLifecycleProvider) Stream(_ context.Context, _ provider.Request) (<-chan provider.Chunk, error) {
+	if p.streamErr != nil {
+		return nil, p.streamErr
+	}
+	ch := make(chan provider.Chunk, 1)
+	ch <- provider.Chunk{Type: provider.ChunkText, Text: `{"summary":"dialog clipped","ocr":{"full_text":"Save","lines":[{"text":"Save"}]},"layout":{"regions":[{"type":"form","reading_order":1,"text":"Save"}]},"semantics":{"scene":"web UI","entities":[],"relations":[]},"uncertainty":["root cause not visible"]}`}
+	close(ch)
+	return ch, nil
+}
+
 func routeTestEvidence() vision.Evidence {
 	return vision.Evidence{Summary: "dialog clipped", OCR: vision.OCR{Lines: []vision.OCRLine{{Text: "Save"}}}, Layout: vision.Layout{Regions: []vision.LayoutRegion{{Type: "form", ReadingOrder: 1, Text: "Save"}}}, Semantics: vision.Semantics{Scene: "web UI", Entities: []vision.SemanticEntity{}, Relations: []vision.SemanticRelation{}}, Uncertainty: []string{"root cause not visible"}}
 }
@@ -113,18 +128,20 @@ func TestRouteImagesPassesAllUserImagesToVisionAndRemovesRawRefsFromMainInput(t 
 func TestRouteImagesUsesStructuredVisionProgressInsteadOfHardcodedPhase(t *testing.T) {
 	root := t.TempDir()
 	writeImageRouteConfig(t, root)
-	d := &routeEvidenceDescriber{}
 	var events []event.Event
+	sink := event.FuncSink(func(e event.Event) { events = append(events, e) })
+	d := vision.NewProviderDescriber(&routeLifecycleProvider{}, nil, sink)
 	c := &Controller{
 		workspaceRoot:   root,
 		modelRef:        "text/main",
 		visionModelRef:  "vision/vl",
 		visionDescriber: d,
-		sink:            event.FuncSink(func(e event.Event) { events = append(events, e) }),
+		sink:            sink,
 	}
 	c.routeImagesOnce(context.Background(), &ImageRouteState{}, "fix it", "why clipped?", []ResolvedImage{{DataURL: "data:image/png;base64,AA=="}})
 
-	hasStructuredProgress := false
+	preparing := 0
+	ready := 0
 	for _, e := range events {
 		if e.Kind == event.Phase || e.Kind == event.Notice {
 			if strings.Contains(e.Text, "Extracting ModLens") || strings.Contains(e.Text, "Visual evidence ready") {
@@ -132,11 +149,47 @@ func TestRouteImagesUsesStructuredVisionProgressInsteadOfHardcodedPhase(t *testi
 			}
 		}
 		if e.Kind == event.VisionProgress && e.VisionProgress != nil && e.VisionProgress.Stage == event.VisionStagePreparing {
-			hasStructuredProgress = true
+			preparing++
+		}
+		if e.Kind == event.VisionProgress && e.VisionProgress != nil && e.VisionProgress.Stage == event.VisionStageReady {
+			ready++
 		}
 	}
-	if !hasStructuredProgress {
-		t.Fatal("vision route emitted no structured preparing progress")
+	if preparing != 1 || ready != 1 {
+		t.Fatalf("preparing=%d ready=%d events=%+v, want one describer lifecycle", preparing, ready, events)
+	}
+}
+
+func TestRouteImagesPreservesDescriberFailureDetailWithoutDuplicateTerminal(t *testing.T) {
+	root := t.TempDir()
+	writeImageRouteConfig(t, root)
+	var events []event.Event
+	sink := event.FuncSink(func(e event.Event) { events = append(events, e) })
+	d := vision.NewProviderDescriber(&routeLifecycleProvider{streamErr: context.DeadlineExceeded}, nil, sink)
+	c := &Controller{
+		workspaceRoot: root, modelRef: "text/main", visionModelRef: "vision/vl",
+		visionDescriber: d, sink: sink,
+	}
+	res := c.routeImagesOnce(context.Background(), &ImageRouteState{}, "look", "look", []ResolvedImage{{DataURL: "data:image/png;base64,AA=="}})
+	failed := 0
+	for _, e := range events {
+		if e.Kind == event.VisionProgress && e.VisionProgress != nil && e.VisionProgress.Stage == event.VisionStageFailed {
+			failed++
+			if e.VisionProgress.Detail != "timeout" {
+				t.Fatalf("failure detail = %q, want timeout", e.VisionProgress.Detail)
+			}
+		}
+	}
+	if failed != maxVisionAttemptsPerTurn {
+		t.Fatalf("failed events=%d, want one per attempt (%d)", failed, maxVisionAttemptsPerTurn)
+	}
+	if len(res.VisualAnalyses) != 1 {
+		t.Fatalf("visual analyses = %+v", res.VisualAnalyses)
+	}
+	for _, stage := range res.VisualAnalyses[0].Stages {
+		if stage.Stage == string(event.VisionStageFailed) && stage.Detail != "timeout" {
+			t.Fatalf("recorded failure detail overwritten: %+v", stage)
+		}
 	}
 }
 

@@ -84,7 +84,9 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 	var lastErr error
 	for attempts < p.maxAttempts {
 		attempts++
-		p.emitProgress(analysisCtx, event.VisionStagePreparing, "")
+		if !DescriberEmitsVisionProgress(p.describer) {
+			p.emitProgress(analysisCtx, event.VisionStagePreparing, "")
+		}
 		ev, _, err := p.describer.DescribeToolImagesOnce(analysisCtx, p.modelRef, ToolImageDescribeInput{ToolName: toolName, ToolText: truncateToolContext(in.ToolText, maxToolContextBytes), TaskContext: truncateToolContext(in.TaskContext, maxToolContextBytes), Images: imgs})
 		if err == nil {
 			evidence := RenderEvidenceContextWithin(ev, "tool:"+toolName, maxToolEvidenceBytes)
