@@ -21,7 +21,7 @@ const directUserImageEvidenceReady = `<direct-visual-input-status>
 The attached user image(s) were already analyzed by the configured independent visual model.
 Use the ModLens v2 evidence below as visual context for this turn.
 The host owns ordinary media analysis for this turn; do not infer pixels from a filename, path, or metadata.
-For a later fresh analysis of conversation media, the main model can call analyze_media_with_vision.
+This is the fresh analysis for the attached image(s); do not call analyze_media_with_vision for the attached image(s) in this turn.
 </direct-visual-input-status>`
 
 func visualModelAssistanceBlock(modelRef string, firstPartyTool bool) string {
@@ -38,10 +38,14 @@ Use the resulting ModLens v2 visual evidence as the visual context for this task
 }
 
 func (c *Controller) injectVisualModelAssistance(input string) string {
+	return c.injectVisualModelAssistanceWithTool(input, c != nil && c.visionDescriber != nil)
+}
+
+func (c *Controller) injectVisualModelAssistanceWithTool(input string, firstPartyTool bool) string {
 	if c == nil || c.visionModelRefOr() == "" {
 		return input
 	}
-	block := visualModelAssistanceBlock(c.visionModelRefOr(), c.visionDescriber != nil)
+	block := visualModelAssistanceBlock(c.visionModelRefOr(), firstPartyTool)
 	if strings.TrimSpace(input) == "" {
 		return block
 	}

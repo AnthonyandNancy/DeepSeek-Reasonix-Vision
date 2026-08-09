@@ -43,7 +43,8 @@ func (c *Controller) routeResolvedMediaOnce(ctx context.Context, state *ImageRou
 	state.RequireIndependentVision = media.ReanalysisRequested
 	route := c.routeImagesOnce(ctx, state, input, rawQuestion, media.Images)
 	toolAvailable := c != nil && c.visionDescriber != nil && c.visionModelRefOr() != ""
-	route.Input = c.injectVisualModelAssistance(media.applyReanalysisGuidance(route.Input, toolAvailable))
+	advertiseTool := toolAvailable && route.Mode != ImageRouteVisionEvidence
+	route.Input = c.injectVisualModelAssistanceWithTool(media.applyReanalysisGuidance(route.Input, toolAvailable), advertiseTool)
 	return route
 }
 
@@ -52,7 +53,11 @@ func (c *Controller) resolveMediaForTurn(input string) MediaTurnResolution {
 	if len(images) > 0 {
 		return MediaTurnResolution{Images: dedupeResolvedImages(images)}
 	}
-	if !visionReanalysisRequested(input) {
+	explicit, contextual := classifyVisionReanalysis(input)
+	if !explicit && !contextual {
+		return MediaTurnResolution{}
+	}
+	if contextual && len(c.safeHistoricalMediaGroups()) == 0 {
 		return MediaTurnResolution{}
 	}
 	return MediaTurnResolution{ReanalysisRequested: true}
@@ -155,36 +160,62 @@ func selectHistoricalVisionMedia(groups [][]ResolvedImage, selection vision.Medi
 }
 
 func visionReanalysisRequested(input string) bool {
+	explicit, contextual := classifyVisionReanalysis(input)
+	return explicit || contextual
+}
+
+func classifyVisionReanalysis(input string) (explicit, contextual bool) {
 	text := strings.ToLower(strings.TrimSpace(input))
 	if text == "" {
-		return false
+		return false, false
 	}
 	if containsAny(text, "what does reanalyze mean", "what does re-analyze mean", "what is reanalyze", "meaning of reanalyze", "重新分析是什么意思", "什么叫重新分析", "reanalyze 是什么意思") {
-		return false
+		return false, false
 	}
 	if negatesVisionReanalysis(text) {
-		return false
+		return false, false
 	}
 	for _, term := range []string{
 		"不要重新分析", "不要再分析", "无需重新分析", "不需要重新分析", "为什么没有重新分析", "为什么没重新分析",
 		"why didn't you reanalyze", "why did not you reanalyze", "why didn't it reanalyze",
 	} {
 		if strings.Contains(text, term) {
-			return false
+			return false, false
 		}
 	}
-	for _, term := range []string{
+	media := containsAny(text,
+		"图片", "图像", "截图", "照片", "相片", "影像", "画面", "媒体", "视觉模型", "张图", "图中", "图里", "图上",
+		"image", "picture", "photo", "screenshot", "media", "vision model", "visual model", "diagram",
+	)
+	chineseAction := containsAny(text, "重新分析", "重新识别", "重新读取", "再分析", "再识别", "重新看", "重新查看", "再次分析", "再次识别", "再次查看")
+	englishReAction := containsAny(text, "reanalyze", "re-analyze", "reinspect", "re-inspect")
+	again := strings.Contains(text, " again") || strings.Contains(text, "one more time") || strings.Contains(text, "once more")
+	englishAction := containsAny(text, "analyze", "analyse", "inspect", "look", "read", "check", "describe", "recognize")
+	if media && (chineseAction || englishReAction || (again && englishAction)) {
+		return true, false
+	}
+	return false, bareVisionReanalysisRequest(text)
+}
+
+func bareVisionReanalysisRequest(text string) bool {
+	text = strings.TrimSpace(strings.NewReplacer(
+		"。", "", "！", "", "？", "", ".", "", "!", "", "?", "", ",", "", "，", "",
+	).Replace(text))
+	for _, prefix := range []string{"麻烦", "请", "帮我", "please ", "can you ", "could you "} {
+		text = strings.TrimSpace(strings.TrimPrefix(text, prefix))
+	}
+	for _, suffix := range []string{"一下", "一遍", "一次", "吧", "好吗", "可以吗", " please"} {
+		text = strings.TrimSpace(strings.TrimSuffix(text, suffix))
+	}
+	for _, command := range []string{
 		"重新分析", "重新识别", "重新读取", "再分析", "再识别", "重新看", "重新查看", "重新调用视觉模型",
 		"analyze again", "reanalyze", "re-analyze", "reinspect", "re-inspect", "look again", "read again",
 	} {
-		if strings.Contains(text, term) {
+		if text == command {
 			return true
 		}
 	}
-	again := strings.Contains(text, " again") || strings.Contains(text, "one more time") || strings.Contains(text, "once more")
-	media := containsAny(text, "image", "picture", "photo", "screenshot", "media")
-	action := containsAny(text, "analyze", "analyse", "inspect", "look", "read", "check", "describe", "recognize")
-	return again && media && action
+	return false
 }
 
 func negatesVisionReanalysis(text string) bool {

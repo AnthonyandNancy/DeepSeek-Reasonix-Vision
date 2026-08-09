@@ -243,10 +243,29 @@ func TestVisionReanalysisIntentHandlesAffirmativeAndNegativeRequests(t *testing.
 		"without inspecting the screenshot again, summarize the old result",
 		"不要重新分析图片",
 		"为什么没有重新分析截图",
+		"重新分析这个问题",
+		"重新分析这段代码",
+		"reanalyze this bug",
+		"analyze the API response again",
 	} {
 		if visionReanalysisRequested(input) {
 			t.Fatalf("visionReanalysisRequested(%q) = true, want false", input)
 		}
+	}
+}
+
+func TestBareVisionReanalysisRequiresHistoricalMedia(t *testing.T) {
+	empty := New(Options{ModelRef: "text/main", VisionModelRef: "vision/vl"})
+	if got := empty.resolveMediaForTurn("重新分析"); got.ReanalysisRequested {
+		t.Fatalf("empty conversation treated bare reanalysis as visual: %+v", got)
+	}
+
+	sess := agent.NewSession("system")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "之前的图片", Images: []string{"data:image/png;base64," + tinyPNG}})
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	withMedia := New(Options{Executor: exec, ModelRef: "text/main", VisionModelRef: "vision/vl"})
+	if got := withMedia.resolveMediaForTurn("重新分析"); !got.ReanalysisRequested {
+		t.Fatalf("historical media did not activate bare visual reanalysis: %+v", got)
 	}
 }
 
@@ -368,6 +387,27 @@ func TestVisualEvidenceGuidanceUsesIndependentModelAsDefaultWithoutToolPolicy(t 
 	evidence := joinVisualEvidenceInput("用户问题", `<visual-evidence schema="modlens-v2">evidence</visual-evidence>`)
 	if strings.Contains(strings.ToLower(evidence), "mcp") || strings.Contains(evidence, "Do not call") {
 		t.Fatalf("visual evidence guidance should not add a tool policy: %q", evidence)
+	}
+}
+
+func TestFreshUserImageEvidenceDoesNotInviteDuplicateFirstPartyAnalysis(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	c := New(Options{
+		WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "分析图片 @fresh.png", "分析图片", MediaTurnResolution{
+		Images: []ResolvedImage{{Ref: "fresh.png", DataURL: "data:image/png;base64," + tinyPNG}},
+	})
+	if route.Mode != ImageRouteVisionEvidence {
+		t.Fatalf("route mode = %v, want fresh independent visual evidence", route.Mode)
+	}
+	if strings.Contains(route.Input, "For a fresh analysis of media already stored in the conversation") {
+		t.Fatalf("fresh attachment guidance invited a duplicate historical analysis:\n%s", route.Input)
+	}
+	if !strings.Contains(route.Input, "do not call analyze_media_with_vision for the attached image(s) in this turn") {
+		t.Fatalf("fresh attachment guidance did not close the same-turn duplicate path:\n%s", route.Input)
 	}
 }
 
