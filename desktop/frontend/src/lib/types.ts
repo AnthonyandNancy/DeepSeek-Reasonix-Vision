@@ -41,11 +41,40 @@ export interface WireStreamAttempt {
 
 export interface WireVisionProgress {
   stage: "preparing" | "connecting" | "waiting" | "response" | "thinking" | "parsing" | "ready" | "failed" | "cancelled" | string;
+  analysisId?: string;
+  initiator?: string;
+  attempt?: number;
+  mediaCount?: number;
   modelRef?: string;
   responseDelta?: string;
   reasoningDelta?: string;
   detail?: string;
   elapsedMs?: number;
+}
+
+export interface VisualAnalysisStage {
+  attempt?: number;
+  stage: string;
+  response?: string;
+  reasoning?: string;
+  detail?: string;
+  elapsed_ms?: number;
+}
+
+export interface VisualAnalysisRecord {
+  id: string;
+  initiator: string;
+  model_ref?: string;
+  status: string;
+  media_refs?: string[];
+  media_count?: number;
+  stages?: VisualAnalysisStage[];
+  summary?: string;
+  ocr_text?: string;
+  evidence?: string;
+  started_at?: number;
+  completed_at?: number;
+  elapsed_ms?: number;
 }
 
 export interface WireCompaction {
@@ -560,6 +589,7 @@ export interface HistoryMessage {
   summary?: string;
   archive?: string;
   decisionReceipt?: WireDecisionReceipt;
+  visualAnalyses?: VisualAnalysisRecord[];
 }
 
 export interface HistoryToolCall {

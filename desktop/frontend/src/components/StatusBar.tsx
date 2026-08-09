@@ -669,7 +669,7 @@ function RemoteStatusBarChip({
                         }
                       }}
                     >
-                      {connected ? t("remote.openWorkspace") : busy ? stateLabel : terminalFailure ? t("remote.error.retry") : t("remote.connectAndOpen")}
+                      {connected ? t("remote.openWorkspace") : busy ? stateLabel : terminalFailure ? t("common.retry") : t("remote.connectAndOpen")}
                     </button>
                     {connected && (
                       <button

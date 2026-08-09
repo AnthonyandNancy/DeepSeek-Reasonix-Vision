@@ -5537,22 +5537,23 @@ func (a *App) singleSurfaceLayoutEnabled() bool {
 // HistoryMessage is one prior turn, for the frontend to repopulate its transcript
 // after a reload.
 type HistoryMessage struct {
-	Role               string                    `json:"role"`
-	Content            string                    `json:"content"`
-	Detail             string                    `json:"detail,omitempty"`
-	Code               string                    `json:"code,omitempty"`
-	SubmitText         string                    `json:"submitText,omitempty"`
-	CheckpointTurn     *int                      `json:"checkpointTurn,omitempty"`
-	CreatedAt          int64                     `json:"createdAt,omitempty"`
-	Reasoning          string                    `json:"reasoning,omitempty"`
-	MemoryCitations    []provider.MemoryCitation `json:"memoryCitations,omitempty"`
-	WorkDurationMs     int64                     `json:"workDurationMs,omitempty"`
-	Level              string                    `json:"level,omitempty"`
-	ToolCalls          []HistoryToolCall         `json:"toolCalls,omitempty"`
-	ToolCallID         string                    `json:"toolCallId,omitempty"`
-	ToolName           string                    `json:"toolName,omitempty"`
-	ToolResultArchived bool                      `json:"toolResultArchived,omitempty"`
-	ToolResultError    string                    `json:"toolResultError,omitempty"`
+	Role               string                          `json:"role"`
+	Content            string                          `json:"content"`
+	Detail             string                          `json:"detail,omitempty"`
+	Code               string                          `json:"code,omitempty"`
+	SubmitText         string                          `json:"submitText,omitempty"`
+	CheckpointTurn     *int                            `json:"checkpointTurn,omitempty"`
+	CreatedAt          int64                           `json:"createdAt,omitempty"`
+	Reasoning          string                          `json:"reasoning,omitempty"`
+	MemoryCitations    []provider.MemoryCitation       `json:"memoryCitations,omitempty"`
+	WorkDurationMs     int64                           `json:"workDurationMs,omitempty"`
+	Level              string                          `json:"level,omitempty"`
+	ToolCalls          []HistoryToolCall               `json:"toolCalls,omitempty"`
+	ToolCallID         string                          `json:"toolCallId,omitempty"`
+	ToolName           string                          `json:"toolName,omitempty"`
+	ToolResultArchived bool                            `json:"toolResultArchived,omitempty"`
+	ToolResultError    string                          `json:"toolResultError,omitempty"`
+	VisualAnalyses     []provider.VisualAnalysisRecord `json:"visualAnalyses,omitempty"`
 	// Execution is local shell metadata restored onto ToolCards after history
 	// reload. Omitted when absent so older frontends ignore it safely.
 	Execution       *provider.ToolExecution   `json:"execution,omitempty"`
@@ -5952,6 +5953,9 @@ func historyMessagesWithPlannerDisplaysAndLookups(
 			displayRole = "assistant"
 		}
 		hm := HistoryMessage{Role: displayRole, Content: content, CheckpointTurn: checkpointTurn, CreatedAt: m.CreatedAt, Reasoning: reasoning, WorkDurationMs: m.WorkDurationMs}
+		if (m.Role == provider.RoleUser || (m.Role == provider.RoleTool && !m.LocalOnly)) && len(m.VisualAnalyses) > 0 {
+			hm.VisualAnalyses = append([]provider.VisualAnalysisRecord(nil), m.VisualAnalyses...)
+		}
 		if m.Role == provider.RoleAssistant && len(m.MemoryCitations) > 0 {
 			hm.MemoryCitations = append([]provider.MemoryCitation(nil), m.MemoryCitations...)
 		}

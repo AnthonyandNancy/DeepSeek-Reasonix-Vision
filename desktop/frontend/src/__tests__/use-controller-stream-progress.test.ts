@@ -229,11 +229,16 @@ function ev(s: typeof initialState, e: WireEvent) {
   let s = ev({ ...initialState }, { kind: "turn_started" } as WireEvent);
   s = ev(s, {
     kind: "vision_progress",
-    visionProgress: { stage: "failed", responseDelta: "partial old JSON", reasoningDelta: "old reasoning" },
+    visionProgress: { analysisId: "vision-retry", attempt: 1, stage: "failed", responseDelta: "partial old JSON", reasoningDelta: "old reasoning" },
   } as WireEvent);
-  s = ev(s, { kind: "vision_progress", visionProgress: { stage: "preparing" } } as WireEvent);
-  eq(s.visionProgress?.responseDelta ?? "", "", "vision retry clears the failed response buffer");
-  eq(s.visionProgress?.reasoningDelta ?? "", "", "vision retry clears the failed reasoning buffer");
+  s = ev(s, { kind: "vision_progress", visionProgress: { analysisId: "vision-retry", attempt: 2, stage: "preparing" } } as WireEvent);
+  const vision = s.items.find((item) => item.kind === "vision");
+  const stages = vision?.kind === "vision" ? vision.analysis.stages ?? [] : [];
+  const retry = stages.find((stage) => stage.attempt === 2 && stage.stage === "preparing");
+  const failedAttempt = stages.find((stage) => stage.attempt === 1 && stage.stage === "failed");
+  eq(retry?.response ?? "", "", "vision retry starts without the failed response buffer");
+  eq(retry?.reasoning ?? "", "", "vision retry starts without the failed reasoning buffer");
+  eq(failedAttempt?.response, "partial old JSON", "failed attempt remains available as history");
 }
 
 process.stdout.write(`\n${passed} passed, ${failed} failed\n`);

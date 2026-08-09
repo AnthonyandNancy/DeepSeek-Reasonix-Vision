@@ -228,11 +228,11 @@ function RemoteFileView({ hostId, path, connected }: { hostId: string; path: str
         {binary && <span className="remote-panel__hint">{t("remote.editor.binaryBlocked")}</span>}
         {truncated && <span className="remote-panel__hint">{t("remote.editor.truncatedBlocked")}</span>}
         {editable && draft === null && (
-          <button className="btn" onClick={() => setDraft(body)}>{t("remote.editor.edit")}</button>
+          <button className="btn" onClick={() => setDraft(body)}>{t("common.edit")}</button>
         )}
         {draft !== null && (
           <button className="btn btn--primary" disabled={saving || !dirty || !connected} onClick={() => void save(false)}>
-            {saving ? t("remote.editor.saving") : t("remote.editor.save")}
+            {saving ? t("remote.editor.saving") : t("common.save")}
           </button>
         )}
         {draft !== null && !connected && <span className="remote-panel__hint">{t("remote.editor.readOnlyDisconnected")}</span>}

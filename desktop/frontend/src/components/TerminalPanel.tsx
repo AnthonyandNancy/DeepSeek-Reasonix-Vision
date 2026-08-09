@@ -89,7 +89,7 @@ export function TerminalPanel({
           <AlertTriangle size={18} />
           <strong>{error}</strong>
           <button type="button" className="btn btn--secondary btn--small" onClick={() => { clearError(); void ensureReady(tabId).catch(() => {}); }}>
-            <RefreshCw size={14} />{t("terminal.retry")}
+            <RefreshCw size={14} />{t("common.retry")}
           </button>
         </div>
       ) : !workspace ? (

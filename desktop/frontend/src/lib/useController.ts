@@ -33,6 +33,8 @@ import type {
   TabMeta,
   TokenMode,
   ToolApprovalMode,
+  VisualAnalysisRecord,
+  VisualAnalysisStage,
   WireApproval,
   WireAsk,
   WireDecisionReceipt,
@@ -189,8 +191,6 @@ export type LiveStream = {
   reasoningCompletedAt?: number;
 };
 
-export type VisionProgress = WireVisionProgress;
-
 /** Speculative journal for one sampling attempt — rolled back on discard. */
 type StreamAttemptJournal = {
   id: string;
@@ -232,6 +232,7 @@ export type Item =
   | { kind: "user"; id: string; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; memoryCitations?: MemoryCitation[] }
   | { kind: "phase"; id: string; text: string }
+  | { kind: "vision"; id: string; analysisId: string; analysis: VisualAnalysisRecord }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string; title?: string; variant?: "delivery"; action?: "continue_delivery"; decisionReceipt?: WireDecisionReceipt }
   | {
       kind: "compaction";
@@ -365,8 +366,6 @@ interface State {
   messageAction?: MessageActionState;
   currentAssistant?: string;
   live?: LiveStream;
-  visionProgress?: VisionProgress;
-  visionProgressHistory?: VisionProgress[];
   pendingUser?: string;
   deliveryRecoveryActive: boolean;
   discardTurn?: boolean;
@@ -434,6 +433,52 @@ interface State {
   // Speculative sampling-attempt journal for Codex-style stream replay.
   // Host-local only; never hydrated from history.
   streamAttemptJournal?: StreamAttemptJournal;
+}
+
+const ACTIVE_VISION_STAGES = new Set(["preparing", "connecting", "waiting", "response", "thinking", "parsing"]);
+const TERMINAL_VISION_STAGES = new Set(["ready", "failed", "cancelled"]);
+
+function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State {
+  const analysisId = incoming.analysisId?.trim();
+  const stageName = incoming.stage?.trim();
+  if (!analysisId || !stageName) return s;
+  const index = s.items.findIndex((item) => item.kind === "vision" && item.analysisId === analysisId);
+  const previousItem = index >= 0 ? s.items[index] : undefined;
+  const previous = previousItem?.kind === "vision" ? previousItem.analysis : undefined;
+  const previousStages = asArray(previous?.stages).map((stage) => ({ ...stage }));
+  const lastAttempt = previousStages.reduce((attempt, stage) => Math.max(attempt, stage.attempt ?? 1), 0);
+  let attempt = typeof incoming.attempt === "number" && incoming.attempt > 0 ? Math.floor(incoming.attempt) : Math.max(1, lastAttempt);
+  if (incoming.attempt == null && stageName === "preparing" && previous && TERMINAL_VISION_STAGES.has(previous.status)) {
+    attempt = Math.max(1, lastAttempt + 1);
+  }
+  const stageIndex = previousStages.findIndex((stage) => (stage.attempt ?? 1) === attempt && stage.stage === stageName);
+  const before = stageIndex >= 0 ? previousStages[stageIndex] : undefined;
+  const response = tailPreview((before?.response ?? "") + (incoming.responseDelta ?? ""), 12_000);
+  const reasoning = tailPreview((before?.reasoning ?? "") + (incoming.reasoningDelta ?? ""), 8_000);
+  const stage: VisualAnalysisStage = {
+    ...before,
+    attempt,
+    stage: stageName,
+    response: response || undefined,
+    reasoning: reasoning || undefined,
+    detail: incoming.detail ?? before?.detail,
+    elapsed_ms: Math.max(before?.elapsed_ms ?? 0, incoming.elapsedMs ?? 0) || undefined,
+  };
+  if (stageIndex >= 0) previousStages[stageIndex] = stage;
+  else previousStages.push(stage);
+  const analysis: VisualAnalysisRecord = {
+    ...previous,
+    id: analysisId,
+    initiator: incoming.initiator ?? previous?.initiator ?? "",
+    model_ref: incoming.modelRef ?? previous?.model_ref,
+    status: stageName,
+    media_count: incoming.mediaCount ?? previous?.media_count,
+    stages: previousStages,
+    elapsed_ms: Math.max(previous?.elapsed_ms ?? 0, incoming.elapsedMs ?? 0) || undefined,
+  };
+  const item: Item = { kind: "vision", id: previousItem?.id ?? `vision:${analysisId}`, analysisId, analysis };
+  const items = index >= 0 ? s.items.map((current, itemIndex) => itemIndex === index ? item : current) : [...s.items, item];
+  return { ...s, items, running: ACTIVE_VISION_STAGES.has(stageName) ? true : s.running };
 }
 
 export const initialState: State = {
@@ -806,6 +851,26 @@ function backendStatusFromRuntimeMeta(meta: RuntimeMetaSnapshot): Extract<Action
 
 // ---- reducer helpers (unchanged logic) ----
 
+function copyVisualAnalysis(record: VisualAnalysisRecord): VisualAnalysisRecord {
+  return {
+    ...record,
+    media_refs: asArray(record.media_refs),
+    stages: asArray(record.stages).map((stage) => ({ ...stage })),
+  };
+}
+
+function appendHistoryVisualAnalyses(items: Item[], records: VisualAnalysisRecord[] | undefined, idPrefix: string, startSeq: number): number {
+  let seq = startSeq;
+  for (const source of asArray(records)) {
+    const analysis = copyVisualAnalysis(source);
+    const analysisId = analysis.id?.trim() || `${idPrefix}vision-${seq}`;
+    analysis.id = analysisId;
+    items.push({ kind: "vision", id: `vision:${analysisId}`, analysisId, analysis });
+    seq += 1;
+  }
+  return seq;
+}
+
 export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: string, startSeq = 0): { items: Item[]; seq: number } {
   const resultByID = new Map<string, HistoryMessage>();
   for (const m of messages) {
@@ -854,6 +919,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
       if (m.content.trim() === "") continue;
       items.push({ kind: "user", id: `${idPrefix}${seq}`, text: m.content, submitText: m.submitText, createdAt: m.createdAt, checkpointTurn: m.checkpointTurn });
       seq++;
+      seq = appendHistoryVisualAnalyses(items, m.visualAnalyses, idPrefix, seq);
       continue;
     }
     if (m.role === "assistant") {
@@ -900,6 +966,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
           execution: result?.execution,
         });
         seq++;
+        seq = appendHistoryVisualAnalyses(items, result?.visualAnalyses, idPrefix, seq);
       }
       continue;
     }
@@ -921,6 +988,7 @@ export function historyMessagesToItems(messages: HistoryMessage[], idPrefix: str
         execution: m.execution,
       });
       seq++;
+      seq = appendHistoryVisualAnalyses(items, m.visualAnalyses, idPrefix, seq);
       continue;
     }
   }
@@ -1354,8 +1422,6 @@ function applyEvent(s: State, e: WireEvent): State {
         currentAssistant: id,
         seq,
         live: { id, text: "", reasoning: "", reasoningComplete: false },
-        visionProgress: undefined,
-        visionProgressHistory: undefined,
         running: true,
         turnActive: true,
         pendingPrompt: false,
@@ -1384,41 +1450,7 @@ function applyEvent(s: State, e: WireEvent): State {
     }
     case "vision_progress": {
       if (!e.visionProgress) return s;
-      const previous = s.visionProgress;
-      const incoming = e.visionProgress;
-      const active = new Set(["preparing", "connecting", "waiting", "response", "thinking", "parsing"]);
-      const newAttempt = incoming.stage === "preparing" && (previous?.stage === "failed" || previous?.stage === "cancelled" || previous?.stage === "ready");
-      const merge = (before: VisionProgress | undefined, after: VisionProgress): VisionProgress => ({
-        ...before,
-        ...after,
-        responseDelta: (before?.responseDelta ?? "") + (after.responseDelta ?? "") || undefined,
-        reasoningDelta: (before?.reasoningDelta ?? "") + (after.reasoningDelta ?? "") || undefined,
-      });
-      const history = s.visionProgressHistory ?? [];
-      let nextHistory: VisionProgress[];
-      if (newAttempt) {
-        nextHistory = [...history, { ...incoming }];
-      } else {
-        let attemptStart = 0;
-        for (let index = history.length - 1; index >= 0; index -= 1) {
-          if (history[index].stage === "ready" || history[index].stage === "failed" || history[index].stage === "cancelled") {
-            attemptStart = index + 1;
-            break;
-          }
-        }
-        const sameStage = history.findIndex((entry, index) => index >= attemptStart && entry.stage === incoming.stage);
-        if (sameStage >= 0) {
-          nextHistory = history.map((entry, index) => index === sameStage ? merge(entry, incoming) : entry);
-        } else {
-          nextHistory = [...history, { ...incoming }];
-        }
-      }
-      return {
-        ...s,
-        visionProgress: newAttempt ? { ...incoming } : merge(previous, incoming),
-        visionProgressHistory: nextHistory,
-        running: active.has(incoming.stage) ? true : s.running,
-      };
+      return upsertVisionProgressItem(s, e.visionProgress);
     }
     case "message": {
       const existingAssistant =
@@ -1793,8 +1825,6 @@ export function reducer(s: State, a: Action): State {
         pendingPrompt: false,
         cancelRequested: false,
         cancellable: true,
-        visionProgress: undefined,
-        visionProgressHistory: undefined,
         ...resetTurnTiming(),
         // New turn epoch: forget the previous prompt anchor so a genuinely new
         // prompt re-anchors freshly instead of inheriting a stale id/time.

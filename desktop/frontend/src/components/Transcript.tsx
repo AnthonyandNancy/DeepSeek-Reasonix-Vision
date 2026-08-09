@@ -1,6 +1,6 @@
 import { createContext, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { ControllerLiveStore, ExtensionItem, Item, LiveStream, VisionProgress } from "../lib/useController";
-import type { CheckpointMeta, WireVisionProgress } from "../lib/types";
+import type { ControllerLiveStore, ExtensionItem, Item, LiveStream } from "../lib/useController";
+import type { CheckpointMeta, VisualAnalysisRecord, VisualAnalysisStage } from "../lib/types";
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
 import { useT } from "../lib/i18n";
 import { AssistantMessage, InvocationMetadataContext, TurnActions, UserMessage } from "./Message";
@@ -25,6 +25,7 @@ import { observeScrollContentSize } from "../lib/scrollContentObserver";
 type ToolItem = Extract<Item, { kind: "tool" }>;
 type AssistantItem = Extract<Item, { kind: "assistant" }>;
 type NoticeItem = Extract<Item, { kind: "notice" }>;
+type VisionItem = Extract<Item, { kind: "vision" }>;
 type OpenTurnAction = { turn: number; menu: "summary" | "rewind" };
 
 const QUESTION_NAV_MIN_COUNT = 2;
@@ -146,6 +147,7 @@ function turnWorkDurationMs(items: readonly Item[]): number {
   if (persisted > 0) return persisted;
   return items.reduce((ms, it) => {
     if (it.kind === "tool") return ms + (it.durationMs ?? 0);
+    if (it.kind === "vision") return ms + (it.analysis.elapsed_ms ?? 0);
     if (it.kind === "assistant") return ms + (it.reasoningDurationMs ?? 0);
     return ms;
   }, 0);
@@ -177,6 +179,10 @@ function workStatusLabel(durationMs: number, running: boolean, t: ReturnType<typ
     return duration ? t("transcript.workingDuration", { duration }) : t("transcript.working");
   }
   return duration ? t("transcript.workedDuration", { duration }) : t("transcript.worked");
+}
+
+function isVisionRunningStatus(status: string): boolean {
+  return status === "preparing" || status === "connecting" || status === "waiting" || status === "response" || status === "thinking" || status === "parsing";
 }
 
 function assistantReasoningOnly(item: AssistantItem): AssistantItem {
@@ -282,8 +288,6 @@ export function Transcript({
   actionPending = false,
   rewindDisabled = false,
   running = false,
-  visionProgress,
-  visionProgressHistory,
   questionNavigator = true,
   welcomeVariant = "default",
   creationMode = false,
@@ -311,8 +315,6 @@ export function Transcript({
   actionPending?: boolean;
   rewindDisabled?: boolean;
   running?: boolean;
-  visionProgress?: WireVisionProgress;
-  visionProgressHistory?: WireVisionProgress[];
   questionNavigator?: boolean;
   welcomeVariant?: "default" | "creation";
   creationMode?: boolean;
@@ -328,7 +330,6 @@ export function Transcript({
   invocationMetadata?: InvocationMetadataMap;
 }) {
   const t = useT();
-  const visibleVisionProgress = visionProgressHistory?.length ? visionProgressHistory : visionProgress ? [visionProgress] : [];
   const subscribeLive = useCallback(
     (listener: () => void) => liveStore?.subscribe(tabId, listener) ?? (() => {}),
     [liveStore, tabId],
@@ -895,20 +896,11 @@ export function Transcript({
           editDisabled={rewindDisabled || !checkpoint?.canConversation}
         />,
       );
-      if (visibleVisionProgress.length > 0 && index === hotGroups.length - 1) {
-        out.push(
-          <VisionProgressCard
-            key={`vision-progress-${user.id}`}
-            progress={visionProgress}
-            history={visionProgressHistory}
-          />,
-        );
-      }
       pushTurnBody(user.id, turnItems, turnIsActive);
       if (!turnIsActive) pushTurnActions(turn, turnItems);
     }
     return out;
-  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, visibleVisionProgress, visionProgress, visionProgressHistory, onEditPrompt, onPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, turnGroups, tabId, actionHoverMenus, creationMode, lastTurn, turnStartAt, liveId, liveHasAnswerText, liveHasReasoning, t]);
+  }, [hotStartIdx, items, openAction, actionPending, rewindDisabled, running, onEditPrompt, onPrompt, onRewind, subcallsByParent, userTurn, checkpointsByTurn, displayMode, turnGroups, tabId, actionHoverMenus, creationMode, lastTurn, turnStartAt, liveId, liveHasAnswerText, liveHasReasoning, t]);
 
   // ── Assemble rendered output ──────────────────────────────────────────────
   // Warm/cold zone is a separate memo'd WarmZone component so streaming tokens
@@ -1406,6 +1398,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId, creationMode =
       if (it.kind === "phase") return true;
       if (it.kind === "notice") return true;
       if (it.kind === "compaction") return true;
+      if (it.kind === "vision") return true;
       if (it.kind !== "tool") return false;
       if (it.parentId || it.name === "todo_write" || it.name === "exit_plan_mode") return false;
       return true;
@@ -1416,6 +1409,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId, creationMode =
 
   const hasRunningProcess = displayItems.some((it) => {
     if (it.kind === "tool") return it.status === "running";
+    if (it.kind === "vision") return isVisionRunningStatus(it.analysis.status);
     if (it.kind !== "assistant") return false;
     if (live?.id === it.id) return !live.reasoningComplete;
     return it.streaming && !it.reasoningComplete;
@@ -1474,9 +1468,11 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId, creationMode =
   // and users have no way to know process detail sits behind it.
   const toolCount = displayItems.reduce((n, it) => n + (it.kind === "tool" ? 1 : 0), 0);
   const thoughtCount = displayItems.reduce((n, it) => n + (it.kind === "assistant" ? 1 : 0), 0);
+  const visionCount = displayItems.reduce((n, it) => n + (it.kind === "vision" ? 1 : 0), 0);
   const countParts: string[] = [];
   if (toolCount > 0) countParts.push(t("transcript.toolCount", { n: toolCount }));
   if (thoughtCount > 0) countParts.push(t("transcript.thoughtCount", { n: thoughtCount }));
+  if (visionCount > 0) countParts.push(t(visionCount === 1 ? "transcript.visionCountOne" : "transcript.visionCount", { n: visionCount }));
   const label = labelStyle === "counts"
     ? (countParts.length > 0 ? countParts.join(" · ") : t("transcript.processed"))
     : countParts.length > 0
@@ -1536,6 +1532,7 @@ function TurnCollapse({ items, durationMs, mode, subcalls, tabId, creationMode =
       case "phase": body.push(<PhaseCard key={it.id} text={it.text} />); break;
       case "notice": body.push(<NoticeCard key={it.id} item={it} />); break;
       case "compaction": body.push(<CompactionCard key={it.id} item={it} />); break;
+      case "vision": body.push(<VisionProcessItem key={it.id} item={it} />); break;
       case "assistant":
         // Answer text renders outside the fold (partitionTurnItems strips it),
         // so the fold only ever shows the reasoning segment.
@@ -1701,54 +1698,109 @@ function PhaseCard({ text }: { text: string }) {
   return <div className="phase" data-entrance="true"><ProcessPhaseIcon size={12} /><span>{text}</span></div>;
 }
 
-export function VisionProgressCard({ progress, history }: { progress?: VisionProgress; history?: VisionProgress[] }) {
+function visionInitiatorLabel(initiator: string, t: ReturnType<typeof useT>): string {
+  if (initiator === "host_auto") return t("visionProcess.initiator.hostAuto");
+  if (initiator === "main_model_tool") return t("visionProcess.initiator.mainModelTool");
+  if (initiator === "tool_media_bridge") return t("visionProcess.initiator.toolMediaBridge");
+  return t("visionProcess.title");
+}
+
+function visionStageLabel(stage: string, t: ReturnType<typeof useT>): string {
+  if (stage === "cancelled") return t("visionProgress.cancelled");
+  const known = stage === "preparing" || stage === "connecting" || stage === "waiting" || stage === "response" || stage === "thinking" || stage === "parsing" || stage === "ready" || stage === "failed";
+  return known ? t((`visionProgress.${stage}`) as never) : `${t("visionProcess.title")} · ${stage}`;
+}
+
+function visionStageDetail(stage: string, t: ReturnType<typeof useT>, model: string): string {
+  const parts = [visionStageLabel(stage, t)];
+  if (model) parts.push(`${t("settings.statusBarItem.model")}: ${model}`);
+  parts.push("ModLens v2");
+  return parts.join(" · ");
+}
+
+function VisionStageItem({ stage, active, model }: { stage: VisualAnalysisStage; active: boolean; model: string }) {
   const t = useT();
-  const entries = history?.length ? history : progress ? [progress] : [];
-  const latest = entries[entries.length - 1];
-  if (!latest) return null;
-  const current = progress ?? latest;
-  let currentIndex = entries.length - 1;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (entries[index].stage === current.stage) {
+  const [open, setOpen] = useState(true);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useGSAPCollapse(bodyRef, open);
+  const response = stage.response?.trim() ?? "";
+  const reasoning = stage.reasoning?.trim() ?? "";
+  const duration = formatWorkDuration(stage.elapsed_ms ?? 0, t);
+  return (
+    <div className={`turn-collapse__reasoning-phase${open ? " turn-collapse__reasoning-phase--open" : ""}`} data-vision-stage={stage.stage}>
+      <button
+        type="button"
+        className="turn-collapse__reasoning-head"
+        data-running={active ? "" : undefined}
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <ProcessBrainIcon size={12} />
+        <span>{visionStageLabel(stage.stage, t)}</span>
+        {(stage.attempt ?? 1) > 1 && <span className="vision-process__meta-text">#{stage.attempt ?? 1}</span>}
+        {duration && <span className="vision-process__meta-text">{duration}</span>}
+        <ChevronRight className={`reasoning__chevron${open ? " reasoning__chevron--open" : ""}`} size={12} />
+      </button>
+      <div ref={bodyRef} className="turn-collapse__inline-reasoning vision-process__stage-body">
+        <div className="vision-process__status-copy">{visionStageDetail(stage.stage, t, model)}</div>
+        {response && (
+          <div className="vision-process__content" data-vision-content="response">
+            <span className="vision-process__content-label">{t("visionProgress.response")}</span>
+            <pre>{response}</pre>
+          </div>
+        )}
+        {reasoning && (
+          <div className="vision-process__content" data-vision-content="reasoning">
+            <span className="vision-process__content-label">{t("settings.typography.preview.reasoning")}</span>
+            <pre>{reasoning}</pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VisionResultSection({ label, value, kind }: { label: string; value: string; kind: "summary" | "ocr" }) {
+  if (!value.trim()) return null;
+  return (
+    <div className="vision-process__result" data-vision-content={kind}>
+      <span className="vision-process__content-label">{label}</span>
+      <div className="turn-collapse__inline-reasoning">{value}</div>
+    </div>
+  );
+}
+
+export function VisionProcessItem({ item }: { item: VisionItem }) {
+  const t = useT();
+  const analysis: VisualAnalysisRecord = item.analysis;
+  const running = isVisionRunningStatus(analysis.status);
+  const model = analysis.model_ref?.trim() ?? "";
+  const stages = analysis.stages?.length ? analysis.stages : [{ stage: analysis.status }];
+  let currentIndex = -1;
+  for (let index = stages.length - 1; index >= 0; index -= 1) {
+    if (stages[index].stage === analysis.status) {
       currentIndex = index;
       break;
     }
   }
-  const terminal = current.stage === "ready" || current.stage === "failed" || current.stage === "cancelled";
+  const duration = formatWorkDuration(analysis.elapsed_ms ?? 0, t);
   return (
-    <section className={`vision-progress${terminal ? " vision-progress--terminal" : ""}`} role="status" aria-live="polite" data-stage={current.stage}>
-      {entries.map((entry, index) => {
-        const stageKey = ("visionProgress." + entry.stage) as never;
-        const stageLabel = entry.stage === "cancelled" ? t("task.state.cancelled") : t(stageKey);
-        const isCurrent = index === currentIndex;
-        const activeStage = isCurrent && !terminal;
-        const stageDetail = activeStage ? stageLabel + " · " + t("todo.inProgress") : !isCurrent ? stageLabel + " · " + t("msg.thinkingDone") : stageLabel;
-        const response = entry.responseDelta?.slice(-12_000) ?? "";
-        const reasoning = entry.reasoningDelta?.slice(-8_000) ?? "";
-        return (
-          <div className="vision-progress__step" key={entry.stage + "-" + index}>
-            <div className="vision-progress__head">
-              <ProcessBrainIcon size={13} aria-hidden="true" />
-              <span className="vision-progress__stage">{stageLabel}</span>
-              {entry.modelRef && <code className="vision-progress__model">{entry.modelRef}</code>}
-              {isCurrent && typeof entry.elapsedMs === "number" && <span className="vision-progress__elapsed">{Math.round(entry.elapsedMs / 100) / 10}s</span>}
-            </div>
-            <div className="vision-progress__detail">{stageDetail}</div>
-            {response && (
-              <details className="vision-progress__section" open={isCurrent && !terminal}>
-                <summary>{t("visionProgress.response")}</summary>
-                <pre>{response}</pre>
-              </details>
-            )}
-            {reasoning && (
-              <details className="vision-progress__section" open={isCurrent && !terminal}>
-                <summary>{t("visionProgress.thinking")}</summary>
-                <pre>{reasoning}</pre>
-              </details>
-            )}
-          </div>
-        );
-      })}
+    <section className="vision-process" role="status" aria-live="polite" data-status={analysis.status}>
+      <div className="vision-process__overview">
+        <ProcessBrainIcon size={12} aria-hidden="true" />
+        <span className="vision-process__title">{running ? t("visionProcess.running") : t("visionProcess.title")}</span>
+        <span className="vision-process__initiator">{visionInitiatorLabel(analysis.initiator, t)}</span>
+        {model && <span className="vision-process__meta-text">{t("settings.statusBarItem.model")}: <code>{model}</code></span>}
+        {(analysis.media_count ?? 0) > 0 && <span className="vision-process__meta-text">{t("msg.attachments")}: {analysis.media_count ?? 0}</span>}
+        {duration && <span className="vision-process__meta-text">{duration}</span>}
+      </div>
+      <div className="vision-process__stages">
+        {stages.map((stage, index) => (
+          <VisionStageItem key={`${stage.attempt ?? 1}-${stage.stage}-${index}`} stage={stage} active={running && index === currentIndex} model={model} />
+        ))}
+      </div>
+      <VisionResultSection label={t("summary.detail")} value={analysis.summary ?? ""} kind="summary" />
+      <VisionResultSection label={t("visionProcess.ocr")} value={analysis.ocr_text ?? ""} kind="ocr" />
     </section>
   );
 }

@@ -90,6 +90,12 @@ export function scrollVersion(items: Item[]): string {
           return `${it.id}:a:${it.streaming ? 1 : 0}`;
         case "tool":
           return `${it.id}:t:${it.status}`;
+        case "vision": {
+          const stages = it.analysis.stages ?? [];
+          const stageChars = stages.reduce((total, stage) => total + (stage.response?.length ?? 0) + (stage.reasoning?.length ?? 0), 0);
+          const stageTails = stages.map((stage) => `${stage.response?.slice(-32) ?? ""}:${stage.reasoning?.slice(-32) ?? ""}`).join("|");
+          return `${it.id}:v:${it.analysis.status}:${stages.length}:${stageChars}:${stageTails}:${it.analysis.summary?.length ?? 0}:${it.analysis.ocr_text?.length ?? 0}`;
+        }
         default:
           return `${it.id}:${it.kind}`;
       }

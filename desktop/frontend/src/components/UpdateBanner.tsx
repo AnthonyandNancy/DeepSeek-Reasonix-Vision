@@ -103,7 +103,7 @@ export function UpdateBanner({
               else void check();
             }}
           >
-            {t("updater.retry")}
+            {t("common.retry")}
           </button>
           <button className="btn btn--small" onClick={() => reset()}>
             {t("updater.dismiss")}

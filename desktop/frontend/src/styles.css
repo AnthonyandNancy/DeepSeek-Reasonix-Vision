@@ -3552,28 +3552,49 @@ a[href] {
   margin-right: auto;
 }
 
-/* ── Notice line (replaces full ProcessCard for notices) ─────────── */
-.vision-progress {
+/* ── Native visual-analysis process rows ─────────────────────────── */
+.vision-process {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin: 8px 0;
-  padding: 9px 11px;
+  gap: 8px;
+  min-width: 0;
   color: var(--fg-dim);
-  background: color-mix(in srgb, var(--bg-soft) 72%, var(--bg-elev));
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
 }
-.vision-progress__head { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.vision-progress__stage { color: var(--fg); font-weight: 600; }
-.vision-progress__model { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-faint); }
-.vision-progress__elapsed { margin-left: auto; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
-.vision-progress__detail { margin: 3px 0 0 20px; color: var(--fg-dim); font-size: 12px; line-height: 1.45; }
-.vision-progress__section { min-width: 0; font-size: 12px; }
-.vision-progress__section summary { cursor: pointer; color: var(--fg-faint); }
-.vision-progress__section pre { max-height: 180px; margin: 6px 0 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); color: var(--fg-dim); }
-.vision-progress--terminal { opacity: .92; }
-.vision-progress__step + .vision-progress__step { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-faint); }
+.vision-process__overview {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  min-width: 0;
+  color: var(--fg-faint);
+  font-size: var(--text-md);
+}
+.vision-process__overview > svg { align-self: center; color: color-mix(in srgb, var(--fg-faint) 88%, transparent); }
+.vision-process__title { color: var(--fg); font-weight: 560; }
+.vision-process__initiator { color: var(--fg-dim); }
+.vision-process__meta-text { color: var(--fg-faint); font-size: var(--text-sm); font-weight: 500; }
+.vision-process__meta-text code { font-family: var(--mono); font-size: inherit; }
+.vision-process__stages { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.vision-process__stages .turn-collapse__reasoning-phase { width: 100%; }
+.vision-process__stage-body { width: 100%; box-sizing: border-box; }
+.vision-process__status-copy { color: color-mix(in srgb, var(--fg-dim) 82%, transparent); }
+.vision-process__content { min-width: 0; margin-top: 8px; }
+.vision-process__content-label { display: block; margin-bottom: 3px; color: var(--fg-faint); font-size: var(--text-sm); font-weight: 560; }
+.vision-process__content pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+.vision-process__result { min-width: 0; }
+.vision-process__result > .turn-collapse__inline-reasoning { margin-top: 0; }
+
+/* ── Notice line (replaces full ProcessCard for notices) ─────────── */
 
 .notice-line {
   display: flex;
@@ -4809,7 +4830,8 @@ a[href] {
   color: var(--fg-faint);
 }
 .tool__head[data-running]:hover,
-.reasoning__head[data-running]:hover {
+.reasoning__head[data-running]:hover,
+.turn-collapse__reasoning-head[data-running]:hover {
   animation-play-state: paused;
   background: none;
   color: var(--fg);
@@ -4817,7 +4839,9 @@ a[href] {
 .tool__head[data-running]:hover .tool__chevron,
 .tool__head[data-running]:hover .tool__duration,
 .reasoning__head[data-running]:hover svg,
-.reasoning__head[data-running]:hover .reasoning__meta {
+.reasoning__head[data-running]:hover .reasoning__meta,
+.turn-collapse__reasoning-head[data-running]:hover svg,
+.turn-collapse__reasoning-head[data-running]:hover .vision-process__meta-text {
   color: var(--fg);
 }
 @keyframes shimmer-sweep {

@@ -1,11 +1,11 @@
 // Run: tsx src/__tests__/transcript-process-fold.test.ts
 
 import { JSDOM } from "jsdom";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
 import type { Item } from "../lib/useController";
-import type { WireVisionProgress } from "../lib/types";
 
 let passed = 0;
 let failed = 0;
@@ -21,6 +21,9 @@ function ok(value: unknown, label: string) {
 }
 
 console.log("\ntranscript process fold");
+
+const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+ok(styles.includes(".turn-collapse__reasoning-head[data-running]:hover"), "active visual stage uses the native hover stop state");
 
 let displayMode = "standard";
 let processFoldPref = "auto";
@@ -50,7 +53,7 @@ try {
   const { Transcript } = await server.ssrLoadModule("/src/components/Transcript.tsx");
   const { LocaleProvider } = await server.ssrLoadModule("/src/lib/i18n.tsx");
 
-  function render(items: Item[], options: { mode?: "standard" | "compact"; running?: boolean; turnStartAt?: number; foldPref?: "auto" | "expanded"; visionProgress?: WireVisionProgress; visionProgressHistory?: WireVisionProgress[] } = {}) {
+  function render(items: Item[], options: { mode?: "standard" | "compact"; running?: boolean; turnStartAt?: number; foldPref?: "auto" | "expanded" } = {}) {
     displayMode = options.mode ?? "standard";
     processFoldPref = options.foldPref ?? "auto";
     const markup = renderToStaticMarkup(
@@ -63,8 +66,6 @@ try {
           questionNavigator: false,
           running: options.running ?? false,
           turnStartAt: options.turnStartAt,
-          visionProgress: options.visionProgress,
-          visionProgressHistory: options.visionProgressHistory,
         }),
       ),
     );
@@ -83,36 +84,34 @@ try {
 
   const visionDoc = render([
     { kind: "user", id: "u-vision", text: "compare these images" },
+    {
+      kind: "vision",
+      id: "vision:vision-live",
+      analysisId: "vision-live",
+      analysis: {
+        id: "vision-live",
+        initiator: "host_auto",
+        model_ref: "vision/vl",
+        status: "thinking",
+        media_count: 2,
+        stages: [
+          { attempt: 1, stage: "preparing" },
+          { attempt: 1, stage: "connecting" },
+          { attempt: 1, stage: "thinking", reasoning: "checking both images" },
+        ],
+      },
+    },
     { kind: "assistant", id: "a-vision", text: "", reasoning: "waiting", streaming: true },
-  ], {
-    running: true,
-    visionProgressHistory: [
-      { stage: "preparing", modelRef: "vision/vl" },
-      { stage: "connecting", modelRef: "vision/vl" },
-      { stage: "thinking", modelRef: "vision/vl", reasoningDelta: "checking both images" },
-    ],
-  });
+  ], { running: true });
   const visionUser = visionDoc.querySelector(".msg--user");
-  const visionCard = visionDoc.querySelector(".vision-progress");
-  ok(Boolean(visionUser && visionCard && (visionUser.compareDocumentPosition(visionCard) & visionDoc.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING)), "vision progress renders below its user message");
-  ok(visionDoc.querySelector(".transcript")?.firstElementChild?.classList.contains("vision-progress") !== true, "vision progress is not rendered at transcript root");
-  ok(visionDoc.querySelectorAll(".vision-progress__stage").length === 3, "vision lifecycle renders each retained stage");
-
-  const alternatingVisionDoc = render([
-    { kind: "user", id: "u-vision-alternating", text: "inspect again" },
-    { kind: "assistant", id: "a-vision-alternating", text: "", reasoning: "waiting", streaming: true },
-  ], {
-    running: true,
-    visionProgress: { stage: "response", responseDelta: "continued response" },
-    visionProgressHistory: [
-      { stage: "preparing", modelRef: "vision/vl" },
-      { stage: "response", modelRef: "vision/vl", responseDelta: "continued response" },
-      { stage: "thinking", modelRef: "vision/vl", reasoningDelta: "checking" },
-    ],
-  });
-  const alternatingSteps = alternatingVisionDoc.querySelectorAll(".vision-progress__step");
-  ok(alternatingSteps[1]?.querySelector("details")?.hasAttribute("open") === true, "revisited response stage remains active");
-  ok(alternatingSteps[2]?.querySelector("details")?.hasAttribute("open") === false, "previous thinking stage is completed after response resumes");
+  const visionProcess = visionDoc.querySelector(".vision-process");
+  ok(Boolean(visionUser && visionProcess && (visionUser.compareDocumentPosition(visionProcess) & visionDoc.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING)), "vision process renders below its user message");
+  ok(Boolean(visionProcess?.closest(".turn-collapse")), "vision process participates in the native turn fold");
+  ok(visionDoc.querySelector(".vision-progress") === null, "legacy standalone vision card is removed");
+  ok(visionProcess?.querySelectorAll(".turn-collapse__reasoning-phase[data-vision-stage]").length === 3, "vision lifecycle reuses native reasoning phase rows");
+  ok(Boolean(visionProcess?.querySelector(".turn-collapse__reasoning-head[data-running]")), "active visual stage reuses native shimmer state");
+  ok(visionProcess?.textContent?.includes("checking both images"), "emitted visual reasoning is rendered inside the process fold");
+  ok(visionDoc.querySelector(".turn-collapse__label")?.textContent?.includes("1 visual analysis"), "native fold count includes visual analyses");
 
   for (const mode of ["standard", "compact"] as const) {
     const doc = render(warningTurn, { mode });

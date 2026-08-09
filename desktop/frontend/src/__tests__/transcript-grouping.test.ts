@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { buildStepGroups, buildTurnGroups, createWarmLayerState, lastQuestionTurn, questionTurnsById, warmColdPageForTurn, warmLayerForSession, warmLayerWithColdPageAtLeast, warmLayerWithExpandedTurn, warmLayerWithNextColdPage, warmPagination } from "../lib/transcriptGrouping";
+import { buildStepGroups, buildTurnGroups, createWarmLayerState, lastQuestionTurn, questionTurnsById, scrollVersion, warmColdPageForTurn, warmLayerForSession, warmLayerWithColdPageAtLeast, warmLayerWithExpandedTurn, warmLayerWithNextColdPage, warmPagination } from "../lib/transcriptGrouping";
 import type { Item } from "../lib/useController";
 
 let passed = 0;
@@ -87,6 +87,39 @@ console.log("\ntranscript grouping contract");
   ] as Item[]);
   eq(groups[1]?.isFinal, false, "tool-only completed steps still fold in compact mode");
   eq(groups[2]?.isFinal, true, "later visible final answer renders directly");
+}
+
+{
+  const before: Item[] = [{
+    kind: "vision",
+    id: "vision:streaming",
+    analysisId: "streaming",
+    analysis: { id: "streaming", initiator: "host_auto", status: "response", stages: [{ stage: "response", response: "a" }] },
+  }];
+  const after: Item[] = [{
+    kind: "vision",
+    id: "vision:streaming",
+    analysisId: "streaming",
+    analysis: { id: "streaming", initiator: "host_auto", status: "response", stages: [{ stage: "response", response: "ab" }] },
+  }];
+  ok(scrollVersion(before) !== scrollVersion(after), "visual response growth advances the auto-scroll content version");
+}
+
+{
+  const full = "a".repeat(12_000);
+  const before: Item[] = [{
+    kind: "vision",
+    id: "vision:bounded",
+    analysisId: "bounded",
+    analysis: { id: "bounded", initiator: "host_auto", status: "response", stages: [{ stage: "response", response: full }] },
+  }];
+  const after: Item[] = [{
+    kind: "vision",
+    id: "vision:bounded",
+    analysisId: "bounded",
+    analysis: { id: "bounded", initiator: "host_auto", status: "response", stages: [{ stage: "response", response: `${full.slice(1)}b` }] },
+  }];
+  ok(scrollVersion(before) !== scrollVersion(after), "bounded visual response replacement still advances the auto-scroll content version");
 }
 
 {

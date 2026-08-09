@@ -77,6 +77,29 @@ func TestHistoryMessagesIncludeAssistantReasoning(t *testing.T) {
 	}
 }
 
+func TestHistoryMessagesPreserveUserAndToolVisualAnalyses(t *testing.T) {
+	userRecord := provider.VisualAnalysisRecord{
+		ID: "vision-user", Initiator: "host_auto", Status: "ready", Summary: "user screenshot",
+		Stages: []provider.VisualAnalysisStage{{Attempt: 1, Stage: "ready", Response: "user response"}},
+	}
+	toolRecord := provider.VisualAnalysisRecord{
+		ID: "vision-tool", Initiator: "main_model_tool", Status: "ready", OCRText: "Save",
+		Stages: []provider.VisualAnalysisStage{{Attempt: 1, Stage: "thinking", Reasoning: "checking labels"}},
+	}
+	got := historyMessages([]provider.Message{
+		{Role: provider.RoleUser, Content: "inspect", VisualAnalyses: []provider.VisualAnalysisRecord{userRecord}},
+		{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "call-1", Name: "analyze_media_with_vision", Arguments: `{}`}}},
+		{Role: provider.RoleTool, ToolCallID: "call-1", Name: "analyze_media_with_vision", Content: "evidence", VisualAnalyses: []provider.VisualAnalysisRecord{toolRecord}},
+	}, func(content string) string { return content })
+
+	if len(got) != 3 || len(got[0].VisualAnalyses) != 1 || got[0].VisualAnalyses[0].ID != userRecord.ID {
+		t.Fatalf("user visual analyses = %+v", got)
+	}
+	if len(got[2].VisualAnalyses) != 1 || got[2].VisualAnalyses[0].ID != toolRecord.ID || got[2].VisualAnalyses[0].Stages[0].Reasoning != "checking labels" {
+		t.Fatalf("tool visual analyses = %+v", got[2])
+	}
+}
+
 func TestHistoryMessagesReplayAttachedDecisionReceiptAfterAssistant(t *testing.T) {
 	receipt := &provider.DecisionReceipt{ID: "approval-1", Kind: "tool", Tool: "bash", Outcome: "allow_once"}
 	got := historyMessages([]provider.Message{

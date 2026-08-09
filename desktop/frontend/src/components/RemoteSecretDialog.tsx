@@ -68,7 +68,7 @@ export function RemoteSecretDialog() {
         />
         <div className="remote-hostkey-dialog__actions">
           <button type="button" className="btn" onClick={() => void resolve(false)}>
-            {t("remote.secret.cancel")}
+            {t("common.cancel")}
           </button>
           <button type="submit" className="btn btn--primary">
             {t("remote.secret.continue")}

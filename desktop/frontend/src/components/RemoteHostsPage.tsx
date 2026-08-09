@@ -54,7 +54,7 @@ export function RemoteHostsPage() {
       title: t("remote.legacyData.cleanTitle"),
       message: target === "mirrors" ? t("remote.legacyData.cleanMirrorsConfirm") : t("remote.legacyData.cleanTrustConfirm"),
       confirmLabel: t("remote.legacyData.clean"),
-      cancelLabel: t("remote.host.cancel"),
+      cancelLabel: t("common.cancel"),
       tone: "danger",
     });
     if (!confirmed) return;
@@ -143,7 +143,7 @@ export function RemoteHostsPage() {
                     title: t("remote.host.removeConfirmTitle"),
                     message: t("remote.host.removeConfirm", { host: h.label }),
                     confirmLabel: t("remote.host.remove"),
-                    cancelLabel: t("remote.host.cancel"),
+                    cancelLabel: t("common.cancel"),
                     tone: "danger",
                   });
                   if (!confirmed) return;
@@ -243,7 +243,7 @@ function RemoteHostRow(props: {
           </button>
         )}
         <button className="btn" onClick={props.onEdit}>
-          {t("remote.host.edit")}
+          {t("common.edit")}
         </button>
         <button className="btn btn--danger" onClick={props.onRemove}>
           {t("remote.host.remove")}
@@ -397,9 +397,9 @@ function RemoteHostForm(props: {
       </label>
       {err && <p className="remote-host-form__error" role="alert">{err}</p>}
       <div className="remote-host-form__actions">
-        <button className="btn" onClick={props.onCancel}>{t("remote.host.cancel")}</button>
+        <button className="btn" onClick={props.onCancel}>{t("common.cancel")}</button>
         <button className="btn btn--primary" disabled={busy || !form.label.trim() || !form.host.trim() || (!form.useSSHConfig && form.port < 1) || form.port > 65535} onClick={() => void submit()}>
-          {t("remote.host.save")}
+          {t("common.save")}
         </button>
       </div>
     </div>
@@ -454,7 +454,7 @@ function RemoteSSHConfigImport(props: { onDone: () => void; onCancel: () => void
         </ul>
       )}
       <div className="remote-host-form__actions">
-        <button className="btn" onClick={props.onCancel}>{t("remote.host.cancel")}</button>
+        <button className="btn" onClick={props.onCancel}>{t("common.cancel")}</button>
         <button className="btn btn--primary" disabled={busy || !Object.values(selected).some(Boolean)} onClick={() => void importSelected()}>
           {t("remote.hosts.importSelected")}
         </button>

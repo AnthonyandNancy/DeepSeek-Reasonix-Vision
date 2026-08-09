@@ -1001,7 +1001,7 @@ function fence(label: string, value: string): string {
   return `${label}\n${fenceToken}\n${value.trim()}\n${fenceToken}`;
 }
 
-function sessionItemsToMarkdown(title: string, items: Item[], live?: LiveStream): string {
+export function sessionItemsToMarkdown(title: string, items: Item[], live?: LiveStream): string {
   const lines: string[] = [`# ${title.trim() || "Reasonix session"}`, ""];
   for (const item of materializeLiveItems(items, live)) {
     switch (item.kind) {
@@ -1025,6 +1025,22 @@ function sessionItemsToMarkdown(title: string, items: Item[], live?: LiveStream)
         if (item.error?.trim()) lines.push("", fence("Error", item.error));
         lines.push("");
         break;
+      case "vision": {
+        const analysis = item.analysis;
+        lines.push("### Visual analysis", "", `Initiator: ${analysis.initiator || "unknown"}`, `Status: ${analysis.status || "unknown"}`);
+        if (analysis.model_ref?.trim()) lines.push(`Model: ${analysis.model_ref.trim()}`);
+        if ((analysis.media_count ?? 0) > 0) lines.push(`Media: ${analysis.media_count}`);
+        for (const stage of analysis.stages ?? []) {
+          const attempt = stage.attempt && stage.attempt > 1 ? ` (attempt ${stage.attempt})` : "";
+          lines.push("", `#### ${stage.stage || "stage"}${attempt}`);
+          if (stage.response?.trim()) lines.push("", fence("Response", stage.response));
+          if (stage.reasoning?.trim()) lines.push("", fence("Reasoning", stage.reasoning));
+        }
+        if (analysis.summary?.trim()) lines.push("", "#### Summary", "", analysis.summary.trim());
+        if (analysis.ocr_text?.trim()) lines.push("", "#### OCR", "", analysis.ocr_text.trim());
+        lines.push("");
+        break;
+      }
       case "phase":
         lines.push(`### Phase`, "", item.text.trim(), "");
         break;
@@ -4964,8 +4980,6 @@ export default function App() {
                 actionPending={state.messageAction != null}
                 rewindDisabled={Boolean(activeTab?.readOnly) || !controllerReady || hydratePlaceholderActive || rewindState != null || rewindCommitting || state.running || state.messageAction != null || state.approval != null || state.ask != null || clearContextPending}
                 running={state.running || rewindCommitting}
-                visionProgress={state.visionProgress}
-                visionProgressHistory={state.visionProgressHistory}
                 turnStartAt={state.turnStartAt}
                 welcomeVariant={sidebarCreation ? "creation" : "default"}
                 creationMode={sidebarCreation}

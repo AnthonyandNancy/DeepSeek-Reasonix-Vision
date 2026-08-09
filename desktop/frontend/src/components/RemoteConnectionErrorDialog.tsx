@@ -77,7 +77,7 @@ export function RemoteConnectionErrorDialog({
         )}
         <div className="remote-hostkey-dialog__actions">
           <button ref={closeRef} className="btn" onClick={onClose}>
-            {t("remote.error.close")}
+            {t("common.close")}
           </button>
           {onManage && (
             <button className="btn" onClick={() => { onClose(); onManage(); }}>
@@ -86,7 +86,7 @@ export function RemoteConnectionErrorDialog({
           )}
           {onRetry && (
             <button className="btn btn--primary" onClick={() => { onClose(); onRetry(); }}>
-              {t(mismatch ? "remote.error.retryAfterFix" : "remote.error.retry")}
+              {t(mismatch ? "remote.error.retryAfterFix" : "common.retry")}
             </button>
           )}
         </div>

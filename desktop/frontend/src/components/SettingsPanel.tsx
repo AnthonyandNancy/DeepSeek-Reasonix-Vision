@@ -3326,7 +3326,7 @@ function BotsSection({ s, busy, apply, initialFocus }: BotsSectionProps) {
               {!selectedInstallConnection && install.status !== "showing" && install.status !== "starting" ? (
                 <button type="button" className="btn btn--primary btn--small" disabled={busy} onClick={() => void startInstall(installTarget)}>
                   {install.status === "error" ? <RefreshCw aria-hidden="true" /> : <QrCode aria-hidden="true" />}
-                  {install.status === "error" ? t("settings.botInstallRetry") : t("settings.botInstallGenerate")}
+                  {install.status === "error" ? t("common.retry") : t("settings.botInstallGenerate")}
                 </button>
               ) : null}
               {install.status === "showing" ? (
@@ -7381,7 +7381,7 @@ function UpdatesSection({
             disabled={settingsBusy || updaterBusy}
             onClick={() => status.info ? applyUpdate(status.info) : void check()}
           >
-            {t("updater.retry")}
+            {t("common.retry")}
           </button>
         </div>
       )}

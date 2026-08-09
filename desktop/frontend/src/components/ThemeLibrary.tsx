@@ -927,10 +927,10 @@ function ThemeEditor({
 
       <div className="theme-editor__actions">
         <button type="button" className="btn btn--small" disabled={busy} onClick={onCancel}>
-          {t("settings.themeLibrary.cancel")}
+          {t("common.cancel")}
         </button>
         <button type="button" className="btn btn--small" disabled={busy} onClick={() => onSave(false)}>
-          {t("settings.themeLibrary.save")}
+          {t("common.save")}
         </button>
         <button type="button" className="btn btn--small btn--primary" disabled={busy} onClick={() => onSave(true)}>
           {t("settings.themeLibrary.saveEnable")}

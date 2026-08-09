@@ -466,7 +466,7 @@ export function TaskMonitorPanel({
                         {(task.state === "queued" || task.state === "running" || task.state === "waiting") && (
                           <>
                             <button disabled={actionTask === task.task_id} onClick={() => void controlTask(task, "stop")}>{t("summary.stop")}</button>
-                            <button disabled={actionTask === task.task_id} onClick={() => void controlTask(task, "cancel")}>{t("summary.cancel")}</button>
+                            <button disabled={actionTask === task.task_id} onClick={() => void controlTask(task, "cancel")}>{t("common.cancel")}</button>
                           </>
                         )}
                         {(task.state === "failed" || task.state === "stale") && (

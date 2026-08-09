@@ -32,7 +32,7 @@ function subagentScopeLabel(scope: string, t: ReturnType<typeof useT>): string {
 
 function toolsSummaryLabel(allowedTools: string[] | undefined, t: ReturnType<typeof useT>): string {
   if (!allowedTools || allowedTools.length === 0) return t("subagents.allTools");
-  return t("subagents.toolCount", { n: allowedTools.length });
+  return t("transcript.toolCount", { n: allowedTools.length });
 }
 
 function builtinDescription(name: string, fallback: string, t: ReturnType<typeof useT>): string {
@@ -387,13 +387,13 @@ function BuiltinSubagentRow({
       <SubagentInvocation name={skill.name} onUseInChat={onUseInChat} />
       <div className="subagents-builtin-overrides">
         <div className="subagents-builtin-overrides__field">
-          <span className="subagents-builtin-overrides__field-label">{t("subagents.model")}</span>
+          <span className="subagents-builtin-overrides__field-label">{t("settings.statusBarItem.model")}</span>
           <ModelPicker
             s={s}
             refs={allRefs(s)}
             value={toRef(skill.configuredModel ?? "", s)}
             disabled={busy}
-            ariaLabel={`${skill.name}: ${t("subagents.model")}`}
+            ariaLabel={`${skill.name}: ${t("settings.statusBarItem.model")}`}
             emptyOptionLabel={t("subagents.inheritDefault")}
             emptyOptionHint={t("subagents.effectiveValue", { value: inheritedModel })}
             onPick={onSetModel}
@@ -472,7 +472,7 @@ function CustomSubagentRow({
             </button>
             <InlineConfirmButton
               label={t("common.delete")}
-              confirmLabel={t("subagents.confirmDelete")}
+              confirmLabel={t("history.confirmDelete")}
               cancelLabel={t("common.cancel")}
               disabled={busy}
               danger
@@ -529,10 +529,10 @@ function ToolMultiSelect({
       <div className="subagents-tool-grid__actions">
         <span>{t("subagents.selectedToolCount", { n: selectedToolCount, total: tools.length })}</span>
         <button type="button" disabled={allSelected} onClick={() => onChange(new Set(tools.map((tool) => tool.name)))}>
-          {t("subagents.selectAllTools")}
+          {t("common.selectAll")}
         </button>
         <button type="button" disabled={selected.size === 0} onClick={() => onChange(new Set())}>
-          {t("subagents.clearTools")}
+          {t("settings.clearModelSelection")}
         </button>
       </div>
       {tools.map((tool) => (
@@ -642,7 +642,7 @@ function SubagentProfileForm({
         <span aria-hidden="true">←</span> {t("subagents.backToList")}
       </button>
       <div className="cap-skills-head__title">{isEditing ? t("subagents.editTitle") : t("subagents.newTitle")}</div>
-      <label className="set-label">{t("subagents.name")}</label>
+      <label className="set-label">{t("caps.name")}</label>
       <input
         className="mem-input"
         placeholder={t("subagents.namePlaceholder")}
@@ -677,7 +677,7 @@ function SubagentProfileForm({
         ))}
       </select>
 
-      <label className="set-label">{t("subagents.description")}</label>
+      <label className="set-label">{t("settings.hookDescription")}</label>
       <input
         className="mem-input"
         placeholder={t("subagents.descriptionPlaceholder")}
@@ -724,7 +724,7 @@ function SubagentProfileForm({
           disabled={busy}
           onClick={() => setReadOnly(true)}
         >
-          {t("subagents.readOnlyOn")}
+          {t("subagents.readOnly")}
         </button>
       </div>
       <div className="set-hint">{t("subagents.readOnlyHint")}</div>
@@ -759,7 +759,7 @@ function SubagentProfileForm({
       {tryError && <div className="banner banner--error">{tryError}</div>}
       {tryResult && <pre className="subagents-tryit-result">{tryResult}</pre>}
 
-      <label className="set-label">{t("subagents.scope")}</label>
+      <label className="set-label">{t("botDetail.scope")}</label>
       <select
         className="mem-select set-grow"
         value={scope}
