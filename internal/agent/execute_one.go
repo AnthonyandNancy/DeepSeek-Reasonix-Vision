@@ -710,9 +710,6 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	mutates := plan.mutates
 	recoveryGen := plan.recoveryGen
 
-	var result string
-	var images []string
-	var err error
 	// A call that was authorized under reader classification carries that
 	// basis into dispatch: the MCP execution layer re-verifies it linearizably
 	// against server authorization and live safety metadata, and refuses to
@@ -725,33 +722,8 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	if a.plannerMCPExecution && isMCPExecutionTarget(runTool, permName) && mcpServerAuthorized(runTool) && !mcpDestructiveHint(runTool) {
 		cctx = tool.WithNonDestructiveMCPExecutionIntent(cctx)
 	}
-	var execution *tool.ShellExecution
-	if de, ok := runTool.(tool.DetailedExecutor); ok {
-		var detailed tool.DetailedResult
-		detailed, err = de.ExecuteDetailed(cctx, runArgs)
-		result, images, execution = detailed.Output, detailed.Images, detailed.Execution
-		// Annotate verification outcome when the host classified this call as a verifier.
-		if execution != nil && plan.verification {
-			switch {
-			case err != nil:
-				execution.Verification = tool.ShellVerificationFailed
-			default:
-				execution.Verification = tool.ShellVerificationPassed
-			}
-		} else if execution != nil && execution.Verification == "" {
-			execution.Verification = tool.ShellVerificationNotVerification
-		}
-		// Sole opaque inline interpreters are allowed outside Delivery but cannot
-		// prove mutation completeness.
-		if execution != nil && evidence.BashCommandMayBeOpaqueMutation(runArgs) &&
-			execution.MutationRisk == tool.ShellMutationMayHaveCompleted {
-			execution.MutationRisk = tool.ShellMutationUnknown
-		}
-	} else if it, ok := runTool.(tool.ImageTool); ok {
-		result, images, err = it.ExecuteWithImages(cctx, runArgs)
-	} else {
-		result, err = runTool.Execute(cctx, runArgs)
-	}
+	concrete := executeConcreteTool(cctx, runTool, runArgs, plan.verification)
+	result, images, visualAnalyses, execution, err := concrete.output, concrete.images, concrete.visualAnalyses, concrete.execution, concrete.err
 	// tool.after: extensions rule on the executed result (success or error)
 	// before evidence, hooks, and recovery observation, so every downstream
 	// consumer sees the final (possibly replaced) outcome.
@@ -814,7 +786,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 		body, truncMsg := truncateToolOutput(fmt.Sprintf("error: %v\n%s", err, detail))
 		return toolOutcome{
 			output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != "", truncMsg: truncMsg,
-			execution: execution, recoveryGeneration: recoveryGen,
+			execution: execution, visualAnalyses: visualAnalyses, recoveryGeneration: recoveryGen,
 		}
 	}
 	if mutates {
@@ -830,7 +802,7 @@ func (a *Agent) finishToolExecution(ctx context.Context, plan *toolCallPlan) too
 	body, truncMsg := truncateToolOutput(result)
 	return toolOutcome{
 		output: body, images: images, truncated: truncMsg != "", truncMsg: truncMsg,
-		execution: execution, recoveryGeneration: recoveryGen,
+		execution: execution, visualAnalyses: visualAnalyses, recoveryGeneration: recoveryGen,
 	}
 }
 

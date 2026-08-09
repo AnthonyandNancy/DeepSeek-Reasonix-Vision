@@ -13,24 +13,19 @@ import (
 	"reasonix/internal/event"
 	"reasonix/internal/provider"
 	"reasonix/internal/tool"
+	"reasonix/internal/vision"
 )
 
-func TestReanalysisResolvesLatestHistoricalImageForVisionModel(t *testing.T) {
-	workspace := t.TempDir()
-	writeImageRouteConfig(t, workspace)
-	imagePath := filepath.Join(workspace, "clipboard.png")
-	if err := os.WriteFile(imagePath, mustBase64(t, tinyPNG), 0o644); err != nil {
-		t.Fatal(err)
-	}
+func TestHistoricalVisionMediaResolvesLatestStoredConversationImage(t *testing.T) {
 	sess := agent.NewSession("system")
-	sess.Add(provider.Message{Role: provider.RoleUser, RawContent: "inspect @clipboard.png", Content: "inspect @clipboard.png"})
-	runner := &capabilityRecordingRunner{}
+	sess.Add(provider.Message{Role: provider.RoleUser, Images: []string{"data:image/png;base64,first"}})
+	sess.Add(provider.Message{Role: provider.RoleTool, LocalOnly: true, Images: []string{"data:image/png;base64,latest"}})
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
-	c := New(Options{Runner: runner, Executor: exec, WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl"})
+	c := New(Options{Executor: exec, ModelRef: "text/main", VisionModelRef: "vision/vl"})
 
-	media := c.resolveMediaForTurn("重新分析之前的图片")
-	if len(media.Images) != 1 || media.Images[0].Path != "clipboard.png" || media.Images[0].DataURL == "" {
-		t.Fatalf("historical images = %+v, want latest historical image", media.Images)
+	images, refs, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: -1})
+	if err != nil || len(images) != 1 || images[0].DataURL != "data:image/png;base64,latest" || len(refs) != 1 {
+		t.Fatalf("images=%+v refs=%v err=%v, want latest stored image", images, refs, err)
 	}
 }
 
@@ -50,9 +45,9 @@ func TestReanalysisResolvesNamedHistoricalAttachmentPath(t *testing.T) {
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	c := New(Options{Executor: exec, WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl"})
 
-	media := c.resolveMediaForTurn("重新分析之前的图片")
-	if len(media.Images) != 1 || media.Images[0].Path != rel || media.Images[0].DataURL == "" {
-		t.Fatalf("named historical images = %+v, want exact attachment path", media.Images)
+	images, refs, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: -1})
+	if err != nil || len(images) != 1 || images[0].Path != rel || images[0].DataURL == "" || len(refs) != 1 || refs[0] != rel {
+		t.Fatalf("named historical images=%+v refs=%v err=%v", images, refs, err)
 	}
 }
 
@@ -84,13 +79,13 @@ func TestReanalysisUsesLegacyDisplayResolverWhenProviderTurnHasNoMediaRef(t *tes
 		},
 	})
 
-	media := c.resolveMediaForTurn("重新分析之前的图片")
-	if len(media.Images) != 1 || media.Images[0].Path != rel || media.Images[0].DataURL == "" {
-		t.Fatalf("legacy display images = %+v, want recovered attachment", media.Images)
+	images, refs, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: -1})
+	if err != nil || len(images) != 1 || images[0].Path != rel || images[0].DataURL == "" || len(refs) != 1 {
+		t.Fatalf("legacy display images=%+v refs=%v err=%v", images, refs, err)
 	}
 }
 
-func TestReanalysisScansAbsoluteImagePathsFromToolHistory(t *testing.T) {
+func TestHistoricalVisionMediaRejectsAbsolutePathsFromToolProse(t *testing.T) {
 	workspace := t.TempDir()
 	writeImageRouteConfig(t, workspace)
 	path := filepath.Join(workspace, ".reasonix", "attachments", "tool-absolute.png")
@@ -110,13 +105,9 @@ func TestReanalysisScansAbsoluteImagePathsFromToolHistory(t *testing.T) {
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	c := New(Options{Executor: exec, WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl"})
 
-	media := c.resolveMediaForTurn("重新分析之前的图片")
-	if len(media.Images) != 1 || media.Images[0].DataURL == "" {
-		t.Fatalf("absolute tool-history images = %+v, want one readable image", media.Images)
-	}
-	wantRel := filepath.ToSlash(filepath.Join(".reasonix", "attachments", "tool-absolute.png"))
-	if media.Images[0].Path != wantRel {
-		t.Fatalf("absolute tool-history path = %q, want workspace-relative %q", media.Images[0].Path, wantRel)
+	images, refs, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: -1})
+	if err != nil || len(images) != 0 || len(refs) != 0 {
+		t.Fatalf("absolute tool prose became media: images=%+v refs=%v err=%v", images, refs, err)
 	}
 }
 
@@ -140,13 +131,13 @@ func TestReanalysisUsesStructuredHistoricalMediaRefs(t *testing.T) {
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	c := New(Options{Executor: exec, WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl"})
 
-	media := c.resolveMediaForTurn("重新分析之前的图片")
-	if len(media.Images) != 1 || media.Images[0].Path != rel || media.Images[0].DataURL == "" {
-		t.Fatalf("structured historical media = %+v, want recovered ref", media.Images)
+	images, refs, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: -1})
+	if err != nil || len(images) != 1 || images[0].Path != rel || images[0].DataURL == "" || len(refs) != 1 || refs[0] != rel {
+		t.Fatalf("structured historical media=%+v refs=%v err=%v", images, refs, err)
 	}
 }
 
-func TestReanalysisInvokesIndependentVisionAfterLegacyMediaRecovery(t *testing.T) {
+func TestReanalysisReachesMainModelBeforeHistoricalVisionTool(t *testing.T) {
 	workspace := t.TempDir()
 	writeImageRouteConfig(t, workspace)
 	rel := filepath.ToSlash(filepath.Join(".reasonix", "attachments", "legacy-run.png"))
@@ -178,11 +169,11 @@ func TestReanalysisInvokesIndependentVisionAfterLegacyMediaRecovery(t *testing.T
 	if err := c.Run(context.Background(), "重新分析之前的图片"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if describer.calls != 1 {
-		t.Fatalf("independent vision calls = %d, want 1", describer.calls)
+	if describer.calls != 0 {
+		t.Fatalf("independent vision calls before main model = %d, want 0", describer.calls)
 	}
-	if !strings.Contains(runner.input, `<visual-evidence schema="modlens-v2"`) {
-		t.Fatalf("main runner did not receive ModLens evidence:\n%s", runner.input)
+	if !strings.Contains(runner.input, "analyze_media_with_vision") || strings.Contains(runner.input, `<visual-evidence schema="modlens-v2"`) {
+		t.Fatalf("main runner did not receive first-party reanalysis guidance:\n%s", runner.input)
 	}
 }
 
@@ -195,9 +186,9 @@ func TestReanalysisCanReuseHistoricalToolImageData(t *testing.T) {
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	c := New(Options{Executor: exec, ModelRef: "text/main", VisionModelRef: "vision/vl"})
 
-	media := c.resolveMediaForTurn("重新分析之前的图片")
-	if len(media.Images) != 1 || media.Images[0].DataURL == "" {
-		t.Fatalf("historical tool images = %+v, want the exact stored image data", media.Images)
+	images, _, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: -1})
+	if err != nil || len(images) != 1 || images[0].DataURL == "" {
+		t.Fatalf("historical tool images=%+v err=%v", images, err)
 	}
 }
 
@@ -252,9 +243,9 @@ func TestReanalysisCanSelectAllHistoricalImages(t *testing.T) {
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	c := New(Options{Executor: exec, ModelRef: "text/main", VisionModelRef: "vision/vl"})
 
-	media := c.resolveMediaForTurn("重新分析所有图片")
-	if len(media.Images) != 3 || media.Images[0].DataURL != "data:image/png;base64,first" || media.Images[1].DataURL != "data:image/png;base64,second" || media.Images[2].DataURL != "data:image/png;base64,third" {
-		t.Fatalf("all historical images = %+v, want chronological images", media.Images)
+	images, _, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{All: true, Index: -1})
+	if err != nil || len(images) != 3 || images[0].DataURL != "data:image/png;base64,first" || images[1].DataURL != "data:image/png;base64,second" || images[2].DataURL != "data:image/png;base64,third" {
+		t.Fatalf("all historical images=%+v err=%v", images, err)
 	}
 }
 
@@ -266,21 +257,21 @@ func TestReanalysisCanSelectSecondHistoricalImage(t *testing.T) {
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	c := New(Options{Executor: exec, ModelRef: "text/main", VisionModelRef: "vision/vl"})
 
-	media := c.resolveMediaForTurn("reanalyze the second image")
-	if len(media.Images) != 1 || media.Images[0].DataURL != "data:image/png;base64,second" {
-		t.Fatalf("second historical image = %+v, want second image", media.Images)
+	images, _, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: 1})
+	if err != nil || len(images) != 1 || images[0].DataURL != "data:image/png;base64,second" {
+		t.Fatalf("second historical image=%+v err=%v", images, err)
 	}
 }
 
-func TestReanalysisWithoutRecoverableMediaInjectsHonestStatus(t *testing.T) {
+func TestReanalysisDefersNoMediaDecisionToMainModelTool(t *testing.T) {
 	c := New(Options{ModelRef: "text/main", VisionModelRef: "vision/vl"})
 	media := c.resolveMediaForTurn("重新分析之前的图片")
-	if !media.ReanalysisRequested || media.RecoveryError == "" || len(media.Images) != 0 {
-		t.Fatalf("media resolution = %+v, want requested-but-unavailable state", media)
+	if !media.ReanalysisRequested || len(media.Images) != 0 {
+		t.Fatalf("media resolution = %+v, want deferred reanalysis state", media)
 	}
-	input := media.applyStatus("重新分析之前的图片")
-	if !strings.Contains(input, "<visual-reanalysis-status>") || !strings.Contains(input, "No recoverable historical media") {
-		t.Fatalf("honest reanalysis status missing: %q", input)
+	input := media.applyReanalysisGuidance("重新分析之前的图片", true)
+	if !strings.Contains(input, "<visual-reanalysis-request>") || !strings.Contains(input, "analyze_media_with_vision") {
+		t.Fatalf("reanalysis tool guidance missing: %q", input)
 	}
 }
 
@@ -299,9 +290,9 @@ func TestHistoricalStoredImageWinsOverStaleTextPath(t *testing.T) {
 	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
 	c := New(Options{Executor: exec, WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl"})
 
-	media := c.resolveMediaForTurn("重新分析之前的图片")
-	if len(media.Images) != 1 || media.Images[0].DataURL != "data:image/png;base64,stored-bytes" || media.Images[0].Error != "" {
-		t.Fatalf("stored historical image = %+v, want authoritative stored bytes", media.Images)
+	images, _, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: -1})
+	if err != nil || len(images) != 1 || images[0].DataURL != "data:image/png;base64,stored-bytes" {
+		t.Fatalf("stored historical image=%+v err=%v", images, err)
 	}
 }
 
@@ -333,6 +324,23 @@ func TestVisualModelAssistanceIsInjectedIntoMainModelUserTurn(t *testing.T) {
 	}
 	if got := exec.Session().Snapshot()[0].Content; got != beforeSystem {
 		t.Fatalf("system prompt changed after visual guidance injection: %q -> %q", beforeSystem, got)
+	}
+}
+
+func TestVisualModelAssistanceOnlyAdvertisesUsableFirstPartyTool(t *testing.T) {
+	unavailable := (&Controller{visionModelRef: "vision/vl"}).injectVisualModelAssistance("reanalyze")
+	if strings.Contains(unavailable, "analyze_media_with_vision") {
+		t.Fatalf("unavailable vision tool was advertised: %q", unavailable)
+	}
+	available := (&Controller{visionModelRef: "vision/vl", visionDescriber: &routeEvidenceDescriber{}}).injectVisualModelAssistance("reanalyze")
+	if !strings.Contains(available, "analyze_media_with_vision") {
+		t.Fatalf("usable vision tool was not advertised: %q", available)
+	}
+
+	media := MediaTurnResolution{ReanalysisRequested: true}
+	route := (&Controller{visionModelRef: "vision/vl"}).routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "reanalyze", "reanalyze", media)
+	if strings.Contains(route.Input, "must call analyze_media_with_vision") || !strings.Contains(route.Input, "fresh visual analysis is unavailable") {
+		t.Fatalf("unavailable reanalysis guidance is not truthful: %q", route.Input)
 	}
 }
 

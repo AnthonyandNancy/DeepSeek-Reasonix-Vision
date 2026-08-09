@@ -104,13 +104,12 @@ const maxConcurrentBackgroundTasks = DefaultMaxParallelWriters
 // AlwaysHiddenSubagentTools returns the tool names excluded from every
 // subagent's registry regardless of an explicit allowlist or delegation
 // depth (unlike subagentRecursiveTools, which depends on remaining depth).
-// That covers both subagentAlwaysHiddenTools and subagentJobTools —
-// SubagentToolRegistryForDepth and its read-only variant strip the job tools
-// unconditionally too. Host UIs offering a tool picker for a subagent
+// That covers always-hidden, root-session-only, and unsupported job tools.
+// Host UIs offering a tool picker for a subagent
 // profile's allowed-tools should exclude these from the offered choices —
 // selecting them would be silently ignored at runtime.
 func AlwaysHiddenSubagentTools() []string {
-	names := append([]string(nil), subagentAlwaysHiddenTools...)
+	names := append(append([]string(nil), subagentAlwaysHiddenTools...), rootSessionOnlyTools...)
 	return append(names, subagentJobTools...)
 }
 
@@ -156,7 +155,7 @@ func SubagentToolRegistryForDepth(parent *tool.Registry, names []string, childDe
 // use_capability (for example Economy or legacy callers) but sub-agents still
 // need the proxy.
 func SubagentToolRegistryForDepthWithRuntime(parent *tool.Registry, names []string, childDepth, maxDepth int, runtime *MCPCapabilityRuntime) *tool.Registry {
-	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
+	exclude := append(append([]string(nil), subagentAlwaysHiddenTools...), rootSessionOnlyTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
 		exclude = append(exclude, subagentRecursiveTools...)
 	}
@@ -1579,7 +1578,7 @@ func ReadOnlySubagentToolRegistryForDepth(parent *tool.Registry, names []string,
 // ReadOnlySubagentToolRegistryForDepthWithRuntime is the read-only registry
 // builder with an optional session MCP runtime for proxy injection.
 func ReadOnlySubagentToolRegistryForDepthWithRuntime(parent *tool.Registry, names []string, childDepth, maxDepth int, runtime *MCPCapabilityRuntime) *tool.Registry {
-	exclude := append([]string(nil), subagentAlwaysHiddenTools...)
+	exclude := append(append([]string(nil), subagentAlwaysHiddenTools...), rootSessionOnlyTools...)
 	if childDepth >= NormalizeMaxSubagentDepth(maxDepth) {
 		exclude = append(exclude, subagentRecursiveTools...)
 	} else {

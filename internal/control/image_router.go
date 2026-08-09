@@ -21,23 +21,27 @@ const directUserImageEvidenceReady = `<direct-visual-input-status>
 The attached user image(s) were already analyzed by the configured independent visual model.
 Use the ModLens v2 evidence below as visual context for this turn.
 The host owns ordinary media analysis for this turn; do not infer pixels from a filename, path, or metadata.
-If the user explicitly requests a fresh analysis, the host will rerun the independent visual model on recoverable media.
+For a later fresh analysis of conversation media, the main model can call analyze_media_with_vision.
 </direct-visual-input-status>`
 
-func visualModelAssistanceBlock(modelRef string) string {
+func visualModelAssistanceBlock(modelRef string, firstPartyTool bool) string {
+	toolGuidance := ""
+	if firstPartyTool {
+		toolGuidance = "\nFor a fresh analysis of media already stored in the conversation, call analyze_media_with_vision before answering."
+	}
 	return fmt.Sprintf(`<visual-model-assistance version="1">
 The application has a configured independent visual model: %s.
 For ordinary media, the host routes image bytes to this model before the main model reasons.
-When an application media tool returns image data, the host sends that media to the independent visual model for analysis.
+When an application media tool returns image data, the host sends that media to the independent visual model for analysis.%s
 Use the resulting ModLens v2 visual evidence as the visual context for this task; do not infer pixels from a filename or path.
-</visual-model-assistance>`, strings.TrimSpace(modelRef))
+</visual-model-assistance>`, strings.TrimSpace(modelRef), toolGuidance)
 }
 
 func (c *Controller) injectVisualModelAssistance(input string) string {
 	if c == nil || c.visionModelRefOr() == "" {
 		return input
 	}
-	block := visualModelAssistanceBlock(c.visionModelRefOr())
+	block := visualModelAssistanceBlock(c.visionModelRefOr(), c.visionDescriber != nil)
 	if strings.TrimSpace(input) == "" {
 		return block
 	}

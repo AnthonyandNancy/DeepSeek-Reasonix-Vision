@@ -645,6 +645,41 @@ func TestPlannerToolRegistryClonesUseCapability(t *testing.T) {
 	}
 }
 
+func TestSubagentRegistriesExcludeAnalyzeMediaVisionToolWhilePlannerKeepsIt(t *testing.T) {
+	parent := tool.NewRegistry()
+	parent.Add(subagentRegistryTool{name: "analyze_media_with_vision", readOnly: true})
+	parent.Add(subagentRegistryTool{name: "read_file", readOnly: true})
+
+	planner := PlannerToolRegistry(parent)
+	if _, ok := planner.Get("analyze_media_with_vision"); !ok {
+		t.Fatalf("root planner lost analyze_media_with_vision: %v", planner.Names())
+	}
+	writer := SubagentToolRegistryForDepth(parent, nil, 1, 2)
+	if _, ok := writer.Get("analyze_media_with_vision"); ok {
+		t.Fatalf("writer subagent inherited root-session vision tool: %v", writer.Names())
+	}
+	reader := ReadOnlySubagentToolRegistryForDepth(parent, nil, 1, 2)
+	if _, ok := reader.Get("analyze_media_with_vision"); ok {
+		t.Fatalf("read-only subagent inherited root-session vision tool: %v", reader.Names())
+	}
+	if _, ok := writer.Get("read_file"); !ok {
+		t.Fatalf("root-only exclusion removed unrelated writer tools: %v", writer.Names())
+	}
+	if _, ok := reader.Get("read_file"); !ok {
+		t.Fatalf("root-only exclusion removed unrelated reader tools: %v", reader.Names())
+	}
+	hidden := AlwaysHiddenSubagentTools()
+	foundHidden := false
+	for _, name := range hidden {
+		if name == "analyze_media_with_vision" {
+			foundHidden = true
+		}
+	}
+	if !foundHidden {
+		t.Fatalf("subagent tool picker does not hide root-session vision tool: %v", hidden)
+	}
+}
+
 func TestTaskToolBuildSubRegUsesSubagentToolRegistry(t *testing.T) {
 	parent := tool.NewRegistry()
 	parent.Add(subagentRegistryTool{name: "task"})

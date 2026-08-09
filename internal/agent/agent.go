@@ -2797,15 +2797,6 @@ func (a *Agent) systemPrompt() string {
 	return b.String()
 }
 
-// batchExecution is the result of one provider tool-call batch.
-type batchExecution struct {
-	results            []string
-	images             [][]string
-	executions         []*tool.ShellExecution
-	recoveryStopTurn   bool
-	recoveryStopReason string
-}
-
 // executeBatch dispatches one model turn's tool calls. A ToolDispatch event is
 // emitted for every call up front, in call order, so a frontend can show the
 // timeline chronologically. Contiguous known ReadOnly calls fan out across
@@ -3112,9 +3103,11 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 		a.applyStormBreaker(calls, outcomes, results, receiptMark)
 	}
 	images := make([][]string, len(calls))
+	visualAnalyses := make([][]provider.VisualAnalysisRecord, len(calls))
 	executions := make([]*tool.ShellExecution, len(calls))
 	for i := range outcomes {
 		images[i] = outcomes[i].images
+		visualAnalyses[i] = cloneVisualAnalyses(outcomes[i].visualAnalyses)
 		executions[i] = outcomes[i].execution
 		if outcomes[i].recoveryStopTurn {
 			recoveryBatchStop = true
@@ -3126,6 +3119,7 @@ func (a *Agent) executeBatch(ctx context.Context, calls []provider.ToolCall) bat
 	return batchExecution{
 		results:            results,
 		images:             images,
+		visualAnalyses:     visualAnalyses,
 		executions:         executions,
 		recoveryStopTurn:   recoveryBatchStop,
 		recoveryStopReason: recoveryStopReason,
@@ -3571,36 +3565,6 @@ func batchStormSignature(calls []provider.ToolCall, outcomes []toolOutcome) (str
 		sb.WriteByte(0)
 	}
 	return sb.String(), true
-}
-
-// toolOutcome is one tool call's result, split into the model-facing output and
-// the display-facing notice bits. errMsg is the short failure reason (empty on
-// success) — a refused call, an unknown tool, or an execution error — so a sink
-// renders the result as failed ("⊘ name <errMsg>" / a red card) instead of OK;
-// blocked narrows that to a refusal (plan mode / permission). truncMsg is set
-// (without the "· " prefix) when the output was head+tailed. images carries
-// data URLs from a tool.ImageTool result; they ride outside output so text
-// truncation can never corrupt an image payload.
-type toolOutcome struct {
-	output           string
-	images           []string
-	blocked          bool
-	errMsg           string
-	truncated        bool
-	truncMsg         string
-	resolved         bool
-	resolvedName     string
-	capabilityID     string
-	resolvedReadOnly bool
-	// execution is local shell metadata (optional). Provider messages strip it
-	// via ModelMessages; UI/event sinks surface it on ToolResult cards.
-	execution *tool.ShellExecution
-	// recoveryGeneration is the gate generation captured before execution so
-	// ObserveResult can ignore stale results after a mode switch.
-	recoveryGeneration uint64
-	// recoveryStopTurn is set when Auto Episode budgets are exhausted.
-	recoveryStopTurn   bool
-	recoveryStopReason string
 }
 
 // completedMCPConnect recognizes a synthetic cache-miss connect call whose

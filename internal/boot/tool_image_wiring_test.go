@@ -146,3 +146,94 @@ func TestBuildSkillChildReceivesToolImageProcessor(t *testing.T) {
 	}
 	assertBootToolImageHandoff(t, prov.Requests())
 }
+
+func TestBuildRegistersRootAnalyzeMediaVisionTool(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+
+	registerBootTokenProfileTestProvider()
+	prov := testutil.NewMock("root-analyze-media-wiring",
+		testutil.Turn{ToolCalls: []provider.ToolCall{{ID: "vision-1", Name: "analyze_media_with_vision", Arguments: `{}`}}},
+		testutil.Turn{Text: bootToolImageEvidence},
+		testutil.Turn{Text: "analysis complete"},
+	)
+	setBootTokenProfileTestProvider(t, prov)
+	writeFile(t, dir, "reasonix.toml", toolImageWiringConfig())
+
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	found := false
+	for _, entry := range ctrl.ToolContractEntries() {
+		if entry.Name == "analyze_media_with_vision" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("root registry missing analyze_media_with_vision: %+v", ctrl.ToolContractEntries())
+	}
+	ctrl.Executor().Session().Add(provider.Message{
+		Role: provider.RoleTool, Name: provider.LocalOnlyToolName, ToolCallID: provider.LocalOnlyToolID,
+		LocalOnly: true, Images: []string{"data:image/png;base64,AA=="},
+	})
+	if err := ctrl.Run(context.Background(), "重新分析上一张图片"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	reqs := prov.Requests()
+	if len(reqs) != 3 {
+		t.Fatalf("provider requests = %d, want main tool call + vision + main continuation", len(reqs))
+	}
+	if len(reqs[1].Messages) != 2 || len(reqs[1].Messages[1].Images) != 1 {
+		t.Fatalf("second request is not independent vision analysis: %+v", reqs[1].Messages)
+	}
+	foundResult := false
+	for _, message := range reqs[2].Messages {
+		if message.Role == provider.RoleTool && message.Name == "analyze_media_with_vision" && strings.Contains(message.Content, `schema="modlens-v2"`) {
+			foundResult = true
+		}
+	}
+	if !foundResult {
+		t.Fatalf("main continuation missing ModLens tool result: %+v", reqs[2].Messages)
+	}
+	foundRecord := false
+	for _, message := range ctrl.History() {
+		if message.Role == provider.RoleTool && message.Name == "analyze_media_with_vision" && len(message.VisualAnalyses) == 1 && message.VisualAnalyses[0].Initiator == "main_model_tool" {
+			foundRecord = true
+		}
+	}
+	if !foundRecord {
+		t.Fatalf("history missing main-model visual analysis record: %+v", ctrl.History())
+	}
+}
+
+func TestBuildOmitsAnalyzeMediaVisionToolWithoutUsableVisionModel(t *testing.T) {
+	isolateConfigHome(t)
+	dir := robustTempDir(t)
+	t.Chdir(dir)
+	registerBootTokenProfileTestProvider()
+	setBootTokenProfileTestProvider(t, testutil.NewMock("no-root-analyze-media"))
+	writeFile(t, dir, "reasonix.toml", `
+default_model = "main"
+
+[agent]
+system_prompt = "BASE"
+
+[[providers]]
+name = "main"
+kind = "boot-token-profile-test"
+model = "text-x"
+`)
+	ctrl, err := Build(context.Background(), Options{Sink: event.Discard})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	defer ctrl.Close()
+	for _, entry := range ctrl.ToolContractEntries() {
+		if entry.Name == "analyze_media_with_vision" {
+			t.Fatalf("unusable vision configuration registered root analysis tool: %+v", entry)
+		}
+	}
+}

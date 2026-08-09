@@ -1015,7 +1015,7 @@ func build(ctx context.Context, opts Options) (*BuildResult, error) {
 			}
 		}
 	}
-	toolImageProcessor := vision.NewToolImageProcessor(visionModelRef, visionDescriber, sink)
+	toolImageProcessor := wireVisionTools(reg, visionModelRef, visionDescriber, sink, ctrlRef.Load)
 	taskModel := firstNonEmpty(cfg.Agent.SubagentModels["task"], cfg.Agent.SubagentModel)
 	taskEffort := firstNonEmpty(cfg.Agent.SubagentEfforts["task"], cfg.Agent.SubagentEffort)
 	maxSubagentDepth := agent.NormalizeMaxSubagentDepth(cfg.Agent.MaxSubagentDepth)

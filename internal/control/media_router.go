@@ -2,27 +2,34 @@ package control
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"reasonix/internal/provider"
+	"reasonix/internal/vision"
 )
 
 type MediaTurnResolution struct {
 	Images              []ResolvedImage
 	ReanalysisRequested bool
-	RecoveryError       string
 }
 
-func (r MediaTurnResolution) applyStatus(input string) string {
-	if strings.TrimSpace(r.RecoveryError) == "" {
+func (r MediaTurnResolution) applyReanalysisGuidance(input string, toolAvailable bool) string {
+	if !r.ReanalysisRequested {
 		return input
 	}
 	block := `<visual-reanalysis-status>
-The user requested a fresh visual analysis. No recoverable historical media was available.
-Do not claim that a new visual analysis was performed; explain that the original media could not be recovered.
+A fresh visual analysis is unavailable because the independent visual analysis tool could not be started.
+Do not claim that a fresh analysis was performed; explain that fresh pixel analysis is unavailable.
 </visual-reanalysis-status>`
+	if toolAvailable {
+		block = `<visual-reanalysis-request>
+The user requested a fresh analysis of media already stored in this conversation.
+The main model must call analyze_media_with_vision before answering; the tool selects conversation-owned media and returns ModLens v2 evidence.
+Do not infer pixels from a filename or path, and do not present older evidence as a fresh analysis.
+</visual-reanalysis-request>`
+	}
 	if strings.TrimSpace(input) == "" {
 		return block
 	}
@@ -35,13 +42,11 @@ func (c *Controller) routeResolvedMediaOnce(ctx context.Context, state *ImageRou
 	}
 	state.RequireIndependentVision = media.ReanalysisRequested
 	route := c.routeImagesOnce(ctx, state, input, rawQuestion, media.Images)
-	route.Input = c.injectVisualModelAssistance(media.applyStatus(route.Input))
+	toolAvailable := c != nil && c.visionDescriber != nil && c.visionModelRefOr() != ""
+	route.Input = c.injectVisualModelAssistance(media.applyReanalysisGuidance(route.Input, toolAvailable))
 	return route
 }
 
-// resolveMediaForTurn includes the latest historical media only for an
-// explicit re-analysis request. Ordinary follow-up questions continue to use
-// the evidence already present in the session.
 func (c *Controller) resolveMediaForTurn(input string) MediaTurnResolution {
 	images := c.resolveInputImages(input)
 	if len(images) > 0 {
@@ -50,11 +55,102 @@ func (c *Controller) resolveMediaForTurn(input string) MediaTurnResolution {
 	if !visionReanalysisRequested(input) {
 		return MediaTurnResolution{}
 	}
-	images = c.resolveHistoricalMedia(historicalMediaSelectionFor(input))
-	if len(images) == 0 {
-		return MediaTurnResolution{ReanalysisRequested: true, RecoveryError: "historical media unavailable"}
+	return MediaTurnResolution{ReanalysisRequested: true}
+}
+
+func (c *Controller) ResolveHistoricalVisionMedia(_ context.Context, selection vision.MediaSelection) ([]vision.Image, []string, error) {
+	groups := c.safeHistoricalMediaGroups()
+	resolved := selectHistoricalVisionMedia(groups, selection)
+	if len(resolved) == 0 {
+		return nil, nil, nil
 	}
-	return MediaTurnResolution{Images: images, ReanalysisRequested: true}
+	images := toVisionImages(resolved)
+	refs := make([]string, 0, len(images))
+	for _, image := range images {
+		ref := strings.TrimSpace(image.Ref)
+		if ref == "" {
+			ref = strings.TrimSpace(filepath.ToSlash(image.Path))
+		}
+		if ref != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return images, refs, nil
+}
+
+func (c *Controller) safeHistoricalMediaGroups() [][]ResolvedImage {
+	var groups [][]ResolvedImage
+	for messageIndex, message := range c.History() {
+		group := storedConversationImages(message, messageIndex)
+		if len(group) == 0 && message.Role == provider.RoleUser {
+			sources := historicalMessageSources(message)
+			for _, candidate := range historicalMessageSources(message) {
+				if display := strings.TrimSpace(c.resolveHistoricalUserContent(candidate)); display != "" {
+					sources = append(sources, display)
+				}
+			}
+			for _, ref := range message.MediaRefs {
+				sources = append(sources, ref)
+			}
+			for _, source := range sources {
+				for _, image := range c.resolveHistoricalAttachmentPaths(source) {
+					image.Ref = strings.TrimPrefix(strings.TrimSpace(image.Ref), "@")
+					group = append(group, image)
+				}
+			}
+		}
+		group = dedupeResolvedImages(group)
+		if len(group) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
+func storedConversationImages(message provider.Message, messageIndex int) []ResolvedImage {
+	group := make([]ResolvedImage, 0, len(message.Images))
+	for imageIndex, dataURL := range message.Images {
+		if strings.TrimSpace(dataURL) == "" {
+			continue
+		}
+		ref := ""
+		if imageIndex < len(message.MediaRefs) {
+			candidate := strings.TrimPrefix(strings.TrimSpace(message.MediaRefs[imageIndex]), "@")
+			if normalized, ok := normalizeHistoricalAttachmentPath(candidate); ok {
+				ref = normalized
+			}
+		}
+		if ref == "" {
+			ref = fmt.Sprintf("conversation:%d:%d", messageIndex, imageIndex)
+		}
+		group = append(group, ResolvedImage{Ref: ref, DataURL: dataURL})
+	}
+	return group
+}
+
+func selectHistoricalVisionMedia(groups [][]ResolvedImage, selection vision.MediaSelection) []ResolvedImage {
+	if len(groups) == 0 {
+		return nil
+	}
+	if selection.All {
+		var all []ResolvedImage
+		for _, group := range groups {
+			all = append(all, group...)
+		}
+		return dedupeResolvedImages(all)
+	}
+	if selection.Index >= 0 {
+		var all []ResolvedImage
+		for _, group := range groups {
+			all = append(all, group...)
+		}
+		all = dedupeResolvedImages(all)
+		if selection.Index >= len(all) {
+			return nil
+		}
+		return []ResolvedImage{all[selection.Index]}
+	}
+	return groups[len(groups)-1]
 }
 
 func visionReanalysisRequested(input string) bool {
@@ -137,36 +233,6 @@ func negatesVisionReanalysis(text string) bool {
 	return false
 }
 
-type historicalMediaSelection struct {
-	all   bool
-	index int
-}
-
-func historicalMediaSelectionFor(input string) historicalMediaSelection {
-	text := strings.ToLower(input)
-	if containsAny(text, "所有图片", "全部图片", "所有截图", "全部截图", "all images", "all screenshots", "every image", "every screenshot") {
-		return historicalMediaSelection{all: true, index: -1}
-	}
-	ordinalTerms := [][]string{
-		{"第一张", "首张", "first image", "first screenshot", "first picture", "first photo"},
-		{"第二张", "second image", "second screenshot", "second picture", "second photo"},
-		{"第三张", "third image", "third screenshot", "third picture", "third photo"},
-		{"第四张", "fourth image", "fourth screenshot", "fourth picture", "fourth photo"},
-		{"第五张", "fifth image", "fifth screenshot", "fifth picture", "fifth photo"},
-		{"第六张", "sixth image", "sixth screenshot", "sixth picture", "sixth photo"},
-		{"第七张", "seventh image", "seventh screenshot", "seventh picture", "seventh photo"},
-		{"第八张", "eighth image", "eighth screenshot", "eighth picture", "eighth photo"},
-		{"第九张", "ninth image", "ninth screenshot", "ninth picture", "ninth photo"},
-		{"第十张", "tenth image", "tenth screenshot", "tenth picture", "tenth photo"},
-	}
-	for index, terms := range ordinalTerms {
-		if containsAny(text, terms...) {
-			return historicalMediaSelection{index: index}
-		}
-	}
-	return historicalMediaSelection{index: -1}
-}
-
 func containsAny(text string, terms ...string) bool {
 	for _, term := range terms {
 		if strings.Contains(text, term) {
@@ -174,157 +240,6 @@ func containsAny(text string, terms ...string) bool {
 		}
 	}
 	return false
-}
-
-func (c *Controller) resolveHistoricalMedia(selection historicalMediaSelection) []ResolvedImage {
-	groups := c.historicalMediaGroups()
-	if len(groups) == 0 {
-		return nil
-	}
-	if selection.all {
-		var all []ResolvedImage
-		for _, group := range groups {
-			all = append(all, group...)
-		}
-		return dedupeResolvedImages(all)
-	}
-	if selection.index >= 0 {
-		var all []ResolvedImage
-		for _, group := range groups {
-			all = append(all, group...)
-		}
-		all = dedupeResolvedImages(all)
-		if selection.index >= len(all) {
-			return nil
-		}
-		return []ResolvedImage{all[selection.index]}
-	}
-	return groups[len(groups)-1]
-}
-
-func (c *Controller) historicalMediaGroups() [][]ResolvedImage {
-	var groups [][]ResolvedImage
-	for index, message := range c.History() {
-		var group []ResolvedImage
-		for imageIndex, dataURL := range message.Images {
-			if strings.TrimSpace(dataURL) == "" {
-				continue
-			}
-			group = append(group, ResolvedImage{
-				Ref:     "history:" + strconv.Itoa(index) + ":" + strconv.Itoa(imageIndex),
-				DataURL: dataURL,
-			})
-		}
-		if len(group) == 0 {
-			sources := historicalMessageSources(message)
-			for _, ref := range message.MediaRefs {
-				if ref = strings.TrimSpace(ref); ref != "" {
-					sources = append(sources, ref)
-				}
-			}
-			// Desktop's .display.json is a legacy UI-side source. It is
-			// intentionally consulted only for user turns; assistant/tool text
-			// must never be allowed to redefine the user's authored prompt.
-			if message.Role == provider.RoleUser {
-				for _, candidate := range historicalMessageSources(message) {
-					if display := strings.TrimSpace(c.resolveHistoricalUserContent(candidate)); display != "" {
-						sources = append(sources, display)
-					}
-				}
-			}
-			for _, source := range sources {
-				if images := c.resolveInputImages(source); len(images) > 0 {
-					group = append(group, images...)
-				}
-				if images := c.resolveHistoricalAttachmentPaths(source); len(images) > 0 {
-					group = append(group, images...)
-				}
-				if images := c.resolveHistoricalAbsoluteImagePaths(source); len(images) > 0 {
-					group = append(group, images...)
-				}
-			}
-		}
-		group = dedupeResolvedImages(group)
-		if len(group) > 0 {
-			groups = append(groups, group)
-		}
-	}
-	return groups
-}
-
-// resolveHistoricalAbsoluteImagePaths recovers workspace-scoped image paths
-// emitted by tools such as glob/read_file; the attachment reader validates them.
-func (c *Controller) resolveHistoricalAbsoluteImagePaths(text string) []ResolvedImage {
-	if c == nil || strings.TrimSpace(c.workspaceRoot) == "" {
-		return nil
-	}
-	seen := map[string]struct{}{}
-	var out []ResolvedImage
-	for _, candidate := range historicalAbsoluteImagePathCandidates(text) {
-		rel, ok := normalizeHistoricalWorkspaceImagePath(candidate, c.workspaceRoot)
-		if !ok || !isImageAttachmentRef(rel) {
-			continue
-		}
-		if _, exists := seen[rel]; exists {
-			continue
-		}
-		seen[rel] = struct{}{}
-		image := ResolvedImage{Ref: "@" + rel, Path: rel}
-		dataURL, err := visionFileImageDataURL(rel, c.workspaceRoot)
-		if err != nil {
-			image.Error = "image file unreadable or unsupported"
-		} else {
-			image.DataURL = dataURL
-		}
-		out = append(out, image)
-	}
-	return out
-}
-
-func historicalAbsoluteImagePathCandidates(text string) []string {
-	fields := strings.FieldsFunc(text, func(r rune) bool {
-		switch r {
-		case ' ', '\t', '\r', '\n', '"', '\'', '`', '<', '>', '(', ')', '[', ']', '{', '}', ',', ';', '!', '?':
-			return true
-		default:
-			return false
-		}
-	})
-	seen := map[string]struct{}{}
-	var out []string
-	for _, field := range fields {
-		field = strings.TrimRight(field, ".，。；！？")
-		if field == "" || (!filepath.IsAbs(field) && filepath.VolumeName(field) == "") || !isImageAttachmentRef(field) {
-			continue
-		}
-		if _, ok := seen[field]; ok {
-			continue
-		}
-		seen[field] = struct{}{}
-		out = append(out, field)
-	}
-	return out
-}
-
-func normalizeHistoricalWorkspaceImagePath(path, workspaceRoot string) (string, bool) {
-	path = strings.TrimSpace(path)
-	workspaceRoot = strings.TrimSpace(workspaceRoot)
-	if path == "" || workspaceRoot == "" || (!filepath.IsAbs(path) && filepath.VolumeName(path) == "") {
-		return "", false
-	}
-	root, err := filepath.Abs(workspaceRoot)
-	if err != nil {
-		return "", false
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", false
-	}
-	rel, err := filepath.Rel(root, abs)
-	if err != nil || rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	return filepath.ToSlash(filepath.Clean(rel)), true
 }
 
 func historicalMessageSources(message provider.Message) []string {

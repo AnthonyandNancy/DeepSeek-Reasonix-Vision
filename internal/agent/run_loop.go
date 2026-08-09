@@ -1001,11 +1001,7 @@ func (a *Agent) handleToolRound(ctx context.Context, state *runLoopState, step i
 		receiptMark = a.evidence.Len()
 	}
 	batch := a.executeBatch(ctx, calls)
-	results, images := batch.results, batch.images
-	var visualAnalyses [][]provider.VisualAnalysisRecord
-	if a.toolImages != nil {
-		results, images, visualAnalyses = a.processToolImages(ctx, calls, results, images)
-	}
+	results, images, visualAnalyses := a.prepareToolRoundOutputs(ctx, calls, batch)
 	var localMedia []provider.Message
 	for i, call := range calls {
 		msg := provider.Message{

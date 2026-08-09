@@ -74,6 +74,16 @@ type ImageTool interface {
 	ExecuteWithImages(ctx context.Context, args json.RawMessage) (text string, images []string, err error)
 }
 
+type TranscriptMetadataResult struct {
+	Output         string
+	Images         []string
+	VisualAnalyses []provider.VisualAnalysisRecord
+}
+
+type TranscriptMetadataExecutor interface {
+	ExecuteWithTranscriptMetadata(context.Context, json.RawMessage) (TranscriptMetadataResult, error)
+}
+
 // PlanModeClassifier is an optional capability a Tool may implement to declare
 // its stance on running during the planning phase. It is deliberately distinct
 // from ReadOnly(): a tool can be side-effect-free yet belong only to the
