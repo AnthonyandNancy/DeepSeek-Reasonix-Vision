@@ -570,6 +570,54 @@ func TestExplicitReanalysisKeepsVisualToolGuidance(t *testing.T) {
 	}
 }
 
+// Pasted desktop text keeps the @[label](path) render form. The host must
+// resolve it to the same media as the plain @path submit form, or a pasted
+// attachment silently stops being an image for the whole vision pipeline.
+func TestPastedNamedAttachmentRefResolvesLikePlainRef(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	rel := filepath.ToSlash(filepath.Join(".reasonix", "attachments", "clipboard-20260810-150443.png"))
+	path := filepath.Join(workspace, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, mustBase64(t, tinyPNG), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, input := range map[string]string{
+		"named":      "这个图的汽车是什么 @[狐狸与阴阳师游戏结合的logo设计.png](" + rel + ")",
+		"plain":      "这个图的汽车是什么 @" + rel,
+		"named only": "@[shot.png](" + rel + ")",
+	} {
+		c := New(Options{
+			WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+			VisionDescriber: &routeEvidenceDescriber{},
+		})
+		media := c.resolveMediaForTurn(input)
+		if len(media.Images) != 1 || media.Images[0].DataURL == "" {
+			t.Fatalf("[%s] resolved images = %+v, want one readable image", name, media.Images)
+		}
+		route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, input, input, media)
+		if route.Mode != ImageRouteVisionEvidence {
+			t.Fatalf("[%s] route mode = %v, want independent visual evidence", name, route.Mode)
+		}
+	}
+}
+
+// A markdown link is prose, not an attachment.
+func TestMarkdownLinkIsNotTreatedAsMedia(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	c := New(Options{
+		WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+	media := c.resolveMediaForTurn("参考 @[官网](https://example.com/a.png) 的说明")
+	if len(media.Images) != 0 {
+		t.Fatalf("markdown link resolved as media: %+v", media.Images)
+	}
+}
+
 type imageRouteTestTool struct{}
 
 func (imageRouteTestTool) Name() string                                             { return "mcp__vision__analyze_image" }

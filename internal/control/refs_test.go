@@ -149,6 +149,13 @@ func TestParseRefTokens(t *testing.T) {
 		{`trailing @my\ file.md.`, []string{"my file.md"}},
 		{`win @C:\dir\shot.png ok`, []string{`C:\dir\shot.png`}},
 		{`unescaped @my file.md`, []string{"my"}},
+		// Desktop renders attachments as @[label](path) and pasted text keeps
+		// that form; the path must survive the whitespace-delimited grammar.
+		{"这个图的汽车是什么 @[狐狸与阴阳师.png](.reasonix/attachments/clipboard-1.png)", []string{".reasonix/attachments/clipboard-1.png"}},
+		{"@[my shot.png](.reasonix/attachments/a.png) and @b.go", []string{".reasonix/attachments/a.png", "b.go"}},
+		{"link @[TODO](https://example.com) stays prose", nil},
+		{"unterminated @[abc keeps plain token", []string{"[abc"}},
+		{"no paren @[abc] here", []string{"[abc"}},
 	}
 	for _, c := range cases {
 		got := parseRefTokens(c.line)

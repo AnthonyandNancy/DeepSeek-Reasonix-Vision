@@ -89,6 +89,14 @@ func parseRefTokens(line string) []string {
 		if line[i] != '@' {
 			continue
 		}
+		if path, end, ok := namedRefPath(line, i+1); ok {
+			i = end - 1
+			if path != "" && !seen[path] {
+				seen[path] = true
+				toks = append(toks, path)
+			}
+			continue
+		}
 		var b strings.Builder
 		j := i + 1
 		for j < len(line) {
@@ -113,6 +121,40 @@ func parseRefTokens(line string) []string {
 		toks = append(toks, t)
 	}
 	return toks
+}
+
+// namedRefPath recovers the path from a markdown-style @[label](path) token
+// starting at line[at]. Desktop renders attachments in that form and pasted
+// text keeps it, so the whitespace-delimited grammar above would otherwise
+// swallow label and path together and resolve neither. Mirrors the frontend's
+// namedAttachmentRefRe: the label rejects "]" and newlines, the path rejects
+// ")" and whitespace. ok reports that the whole construct was consumed; an
+// empty path means it was a plain markdown link (a "://" target) that must not
+// degrade into a junk token.
+func namedRefPath(line string, at int) (path string, end int, ok bool) {
+	if at >= len(line) || line[at] != '[' {
+		return "", 0, false
+	}
+	label := strings.IndexAny(line[at:], "]\r\n")
+	if label < 0 || line[at+label] != ']' {
+		return "", 0, false
+	}
+	labelEnd := at + label
+	if labelEnd+1 >= len(line) || line[labelEnd+1] != '(' {
+		return "", 0, false
+	}
+	start := labelEnd + 2
+	stop := start
+	for stop < len(line) && line[stop] != ')' && !isRefTokenBoundary(line[stop]) {
+		stop++
+	}
+	if stop >= len(line) || line[stop] != ')' || stop == start {
+		return "", 0, false
+	}
+	if path = line[start:stop]; strings.Contains(path, "://") {
+		return "", stop + 1, true
+	}
+	return path, stop + 1, true
 }
 
 // isRefTokenBoundary matches the whitespace class the old `@([^\s]+)` token
