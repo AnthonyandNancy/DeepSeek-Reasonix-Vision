@@ -556,7 +556,9 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     response: response || undefined,
     reasoning: reasoning || undefined,
     detail: incoming.detail ?? before?.detail,
-    duration_ms: isVisionDuration(incoming.stageElapsedMs) ? incoming.stageElapsedMs || undefined : before?.duration_ms,
+    duration_ms: isVisionDuration(incoming.stageElapsedMs)
+      ? Math.max(incoming.stageElapsedMs || 0, before?.duration_ms || 0) || undefined
+      : before?.duration_ms,
   };
   if (stageIndex >= 0) previousStages[stageIndex] = stage;
   else previousStages.push(stage);
@@ -568,7 +570,9 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     status: stageName,
     media_count: incoming.mediaCount ?? previous?.media_count,
     stages: previousStages,
-    elapsed_ms: (isVisionDuration(incoming.elapsedMs) ? incoming.elapsedMs : liveSnapshot.elapsedMs) || undefined,
+    elapsed_ms: isVisionDuration(incoming.elapsedMs)
+      ? Math.max(incoming.elapsedMs || 0, liveSnapshot.elapsedMs || 0) || undefined
+      : liveSnapshot.elapsedMs || undefined,
   };
   const initiator = incoming.initiator ?? previous?.initiator ?? "";
   const ownerKind = incoming.ownerKind ?? previousVisionItem?.ownerKind ?? (initiator === "host_auto" ? "user" : undefined);
@@ -576,7 +580,9 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
   const liveStageKey = `${attempt}:${stageName}`;
   const liveUpdatedAt = ACTIVE_VISION_STAGES.has(stageName)
     ? Math.max(previousVisionItem?.liveUpdatedAt ?? now, now)
-    : undefined;
+    : (TERMINAL_VISION_STAGES.has(stageName) && previousVisionItem?.liveUpdatedAt !== undefined)
+      ? previousVisionItem.liveUpdatedAt
+      : undefined;
   const item: Extract<Item, { kind: "vision" }> = {
     kind: "vision",
     id: previousItem?.id ?? `vision:${analysisId}`,
@@ -585,7 +591,7 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     ownerKind,
     ownerId,
     liveUpdatedAt,
-    liveStageKey: liveUpdatedAt === undefined ? undefined : liveStageKey,
+    liveStageKey: (liveUpdatedAt !== undefined || TERMINAL_VISION_STAGES.has(stageName)) ? liveStageKey : undefined,
   };
   const items = index >= 0
     ? s.items.map((current, itemIndex) => itemIndex === index ? item : current)
