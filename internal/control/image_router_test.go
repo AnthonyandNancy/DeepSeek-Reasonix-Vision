@@ -73,6 +73,29 @@ vision_models = ["vl"]
 	}
 }
 
+func writeVisionCapableImageRouteConfig(t *testing.T, root string) {
+	t.Helper()
+	cfg := `default_model = "main/vl"
+
+[[providers]]
+name = "main"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "vl"
+vision_models = ["vl"]
+
+[[providers]]
+name = "vision"
+kind = "openai"
+base_url = "https://example.invalid"
+model = "evidence"
+vision_models = ["evidence"]
+`
+	if err := os.WriteFile(filepath.Join(root, "reasonix.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRouteImagesUsesModLensEvidenceForTextMainModel(t *testing.T) {
 	root := t.TempDir()
 	writeImageRouteConfig(t, root)
@@ -193,30 +216,24 @@ func TestRouteImagesPreservesDescriberFailureDetailWithoutDuplicateTerminal(t *t
 	}
 }
 
-func TestRouteImagesPrefersConfiguredVisionEvidenceForVisionCapableMainModel(t *testing.T) {
+func TestRouteImagesDirectsToVisionCapableMainModel(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "reasonix.toml"), []byte(`default_model = "main/vl"
-
-[[providers]]
-name = "main"
-kind = "openai"
-base_url = "https://example.invalid"
-model = "vl"
-vision_models = ["vl"]
-
-[[providers]]
-name = "vision"
-kind = "openai"
-base_url = "https://example.invalid"
-model = "evidence"
-vision_models = ["evidence"]
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeVisionCapableImageRouteConfig(t, root)
 	d := &routeEvidenceDescriber{}
 	c := &Controller{workspaceRoot: root, modelRef: "main/vl", visionModelRef: "vision/evidence", visionDescriber: d}
 	res := c.routeImagesOnce(context.Background(), &ImageRouteState{}, "look", "look", []ResolvedImage{{DataURL: "data:image/png;base64,AA=="}})
-	if res.Mode != ImageRouteVisionEvidence || len(res.Images) != 0 || d.calls != 1 {
+	if res.Mode != ImageRouteDirectMain || len(res.Images) != 1 || d.calls != 0 {
+		t.Fatalf("res=%+v calls=%d", res, d.calls)
+	}
+}
+
+func TestRouteImagesUsesIndependentVisionWhenRequired(t *testing.T) {
+	root := t.TempDir()
+	writeVisionCapableImageRouteConfig(t, root)
+	d := &routeEvidenceDescriber{}
+	c := &Controller{workspaceRoot: root, modelRef: "main/vl", visionModelRef: "vision/evidence", visionDescriber: d}
+	res := c.routeImagesOnce(context.Background(), &ImageRouteState{RequireIndependentVision: true}, "look", "look", []ResolvedImage{{DataURL: "data:image/png;base64,AA=="}})
+	if res.Mode != ImageRouteVisionEvidence || d.calls != 1 {
 		t.Fatalf("res=%+v calls=%d", res, d.calls)
 	}
 }
@@ -244,34 +261,20 @@ func TestRouteImagesFailureDegradesWithoutClaimingPixels(t *testing.T) {
 	}
 }
 
-func TestReanalysisNeverFallsBackToVisionCapableMainModel(t *testing.T) {
+func TestReanalysisUsesVisionCapableMainModelWithoutIndependentGuidance(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "reasonix.toml"), []byte(`default_model = "main/vl"
-
-[[providers]]
-name = "main"
-kind = "openai"
-base_url = "https://example.invalid"
-model = "vl"
-vision_models = ["vl"]
-
-[[providers]]
-name = "vision"
-kind = "openai"
-base_url = "https://example.invalid"
-model = "evidence"
-vision_models = ["evidence"]
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeVisionCapableImageRouteConfig(t, root)
 	d := &routeEvidenceDescriber{errs: []error{errors.New("vision unavailable"), errors.New("vision unavailable"), errors.New("vision unavailable")}}
 	c := &Controller{workspaceRoot: root, modelRef: "main/vl", visionModelRef: "vision/evidence", visionDescriber: d}
 	res := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "reanalyze", "reanalyze", MediaTurnResolution{
 		Images:              []ResolvedImage{{DataURL: "data:image/png;base64,AA=="}},
 		ReanalysisRequested: true,
 	})
-	if res.Mode == ImageRouteDirectMain || len(res.Images) != 0 || !strings.Contains(res.Input, "could not read") {
-		t.Fatalf("reanalysis route = %+v, want independent-only honest degradation", res)
+	if res.Mode != ImageRouteDirectMain || len(res.Images) != 1 || d.calls != 0 {
+		t.Fatalf("reanalysis route = %+v calls=%d", res, d.calls)
+	}
+	if strings.Contains(res.Input, "<visual-model-assistance>") || strings.Contains(res.Input, "<visual-reanalysis-request>") {
+		t.Fatalf("reanalysis route injected independent-vision guidance: %q", res.Input)
 	}
 }
 

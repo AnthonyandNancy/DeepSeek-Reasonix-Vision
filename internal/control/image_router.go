@@ -42,7 +42,11 @@ func (c *Controller) injectVisualModelAssistance(input string) string {
 }
 
 func (c *Controller) injectVisualModelAssistanceWithTool(input string, firstPartyTool bool) string {
-	if c == nil || c.visionModelRefOr() == "" {
+	return c.injectVisualModelAssistanceWithMainModelSupport(input, firstPartyTool, c.mainModelSupportsVision())
+}
+
+func (c *Controller) injectVisualModelAssistanceWithMainModelSupport(input string, firstPartyTool, mainModelSupportsVision bool) string {
+	if c == nil || mainModelSupportsVision || c.visionModelRefOr() == "" {
 		return input
 	}
 	block := visualModelAssistanceBlock(c.visionModelRefOr(), firstPartyTool)
@@ -73,6 +77,8 @@ type ImageRouteState struct {
 	Resolved                 bool
 	VisionAttempts           int
 	RequireIndependentVision bool
+	mainModelVisionKnown     bool
+	mainModelSupportsVision  bool
 }
 type VisionModelStatusKind uint8
 
@@ -88,7 +94,7 @@ type VisionModelStatus struct {
 	ModelRef, Reason string
 }
 
-func (c *Controller) mainModelSupportsVision() bool { return c.imageInputEnabled() }
+func (c *Controller) mainModelSupportsVision() bool { return c != nil && c.imageInputEnabled() }
 func (c *Controller) visionModelRefOr() string      { return strings.TrimSpace(c.visionModelRef) }
 
 // VisionModelRef returns the provider/model reference for visual evidence.
@@ -148,6 +154,14 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 		state.Resolved = true
 		return pathOnlyResult(input, images, "one or more images were unreadable or unsupported")
 	}
+	if !state.mainModelVisionKnown {
+		state.mainModelSupportsVision = c.mainModelSupportsVision()
+		state.mainModelVisionKnown = true
+	}
+	if state.mainModelSupportsVision && !state.RequireIndependentVision {
+		state.Resolved = true
+		return ImageRouteResult{Mode: ImageRouteDirectMain, Input: input, Images: imageDataURLs(images)}
+	}
 	status := c.resolveVisionModelStatus()
 	if status.Kind == VisionModelSupported && c.visionDescriber != nil {
 		visionImages := toVisionImages(images)
@@ -194,17 +208,13 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 		analysis := []provider.VisualAnalysisRecord{recorder.Snapshot(vision.Evidence{}, "")}
 		if ctx.Err() != nil || state.VisionAttempts >= maxVisionAttemptsPerTurn {
 			state.Resolved = true
-			if c.mainModelSupportsVision() && !state.RequireIndependentVision {
+			if state.mainModelSupportsVision && !state.RequireIndependentVision {
 				return ImageRouteResult{Mode: ImageRouteDirectMain, Input: input, Images: imageDataURLs(images), Notice: "visual evidence extraction failed; using the vision-capable main model", VisualAnalyses: analysis}
 			}
 			result := pathOnlyResult(input, images, fmt.Sprintf("visual evidence extraction failed after %d attempt(s)", state.VisionAttempts))
 			result.VisualAnalyses = analysis
 			return result
 		}
-	}
-	if c.mainModelSupportsVision() && !state.RequireIndependentVision {
-		state.Resolved = true
-		return ImageRouteResult{Mode: ImageRouteDirectMain, Input: input, Images: imageDataURLs(images)}
 	}
 	switch status.Kind {
 	case VisionModelNotConfigured:

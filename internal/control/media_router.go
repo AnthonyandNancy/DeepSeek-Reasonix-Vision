@@ -11,8 +11,10 @@ import (
 )
 
 type MediaTurnResolution struct {
-	Images              []ResolvedImage
-	ReanalysisRequested bool
+	Images                  []ResolvedImage
+	ReanalysisRequested     bool
+	mainModelVisionKnown    bool
+	mainModelSupportsVision bool
 }
 
 func (r MediaTurnResolution) applyReanalysisGuidance(input string, toolAvailable bool) string {
@@ -40,11 +42,21 @@ func (c *Controller) routeResolvedMediaOnce(ctx context.Context, state *ImageRou
 	if state == nil {
 		state = &ImageRouteState{}
 	}
-	state.RequireIndependentVision = media.ReanalysisRequested
+	if media.mainModelVisionKnown && !state.mainModelVisionKnown {
+		state.mainModelVisionKnown = true
+		state.mainModelSupportsVision = media.mainModelSupportsVision
+	}
 	route := c.routeImagesOnce(ctx, state, input, rawQuestion, media.Images)
+	if !state.mainModelVisionKnown {
+		state.mainModelSupportsVision = c.mainModelSupportsVision()
+		state.mainModelVisionKnown = true
+	}
 	toolAvailable := c != nil && c.visionDescriber != nil && c.visionModelRefOr() != ""
 	advertiseTool := toolAvailable && route.Mode != ImageRouteVisionEvidence
-	route.Input = c.injectVisualModelAssistanceWithTool(media.applyReanalysisGuidance(route.Input, toolAvailable), advertiseTool)
+	if !state.mainModelSupportsVision {
+		route.Input = media.applyReanalysisGuidance(route.Input, toolAvailable)
+	}
+	route.Input = c.injectVisualModelAssistanceWithMainModelSupport(route.Input, advertiseTool, state.mainModelSupportsVision)
 	return route
 }
 
@@ -57,10 +69,15 @@ func (c *Controller) resolveMediaForTurn(input string) MediaTurnResolution {
 	if !explicit && !contextual {
 		return MediaTurnResolution{}
 	}
-	if contextual && len(c.safeHistoricalMediaGroups()) == 0 {
+	groups := c.safeHistoricalMediaGroups()
+	if contextual && len(groups) == 0 {
 		return MediaTurnResolution{}
 	}
-	return MediaTurnResolution{ReanalysisRequested: true}
+	media := MediaTurnResolution{ReanalysisRequested: true, mainModelVisionKnown: true, mainModelSupportsVision: c.mainModelSupportsVision()}
+	if media.mainModelSupportsVision {
+		media.Images = selectHistoricalVisionMedia(groups, vision.MediaSelection{Index: -1})
+	}
+	return media
 }
 
 func (c *Controller) ResolveHistoricalVisionMedia(_ context.Context, selection vision.MediaSelection) ([]vision.Image, []string, error) {

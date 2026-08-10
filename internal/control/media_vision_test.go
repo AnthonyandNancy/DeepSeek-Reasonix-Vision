@@ -269,6 +269,29 @@ func TestBareVisionReanalysisRequiresHistoricalMedia(t *testing.T) {
 	}
 }
 
+func TestHistoricalReanalysisRoutesLatestImageToVisionCapableMainModel(t *testing.T) {
+	workspace := t.TempDir()
+	writeVisionCapableImageRouteConfig(t, workspace)
+	sess := agent.NewSession("system")
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: "older image", Images: []string{"data:image/png;base64,older"}})
+	sess.Add(provider.Message{Role: provider.RoleTool, LocalOnly: true, Images: []string{"data:image/png;base64," + tinyPNG}})
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	d := &routeEvidenceDescriber{}
+	c := New(Options{
+		Executor: exec, WorkspaceRoot: workspace, ModelRef: "main/vl", VisionModelRef: "vision/evidence",
+		VisionDescriber: d,
+	})
+
+	media := c.resolveMediaForTurn("重新分析")
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "重新分析", "重新分析", media)
+	if !media.ReanalysisRequested || len(media.Images) != 1 || media.Images[0].DataURL != "data:image/png;base64,"+tinyPNG || route.Mode != ImageRouteDirectMain || len(route.Images) != 1 || route.Images[0] != "data:image/png;base64,"+tinyPNG || d.calls != 0 {
+		t.Fatalf("media=%+v route=%+v calls=%d", media, route, d.calls)
+	}
+	if strings.Contains(route.Input, "<visual-model-assistance>") || strings.Contains(route.Input, "<visual-reanalysis-request>") {
+		t.Fatalf("historical reanalysis injected independent-vision guidance: %q", route.Input)
+	}
+}
+
 func TestReanalysisCanSelectAllHistoricalImages(t *testing.T) {
 	sess := agent.NewSession("system")
 	sess.Add(provider.Message{Role: provider.RoleTool, Images: []string{"data:image/png;base64,first"}})
@@ -375,6 +398,19 @@ func TestVisualModelAssistanceOnlyAdvertisesUsableFirstPartyTool(t *testing.T) {
 	route := (&Controller{visionModelRef: "vision/vl"}).routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "reanalyze", "reanalyze", media)
 	if strings.Contains(route.Input, "must call analyze_media_with_vision") || !strings.Contains(route.Input, "fresh visual analysis is unavailable") {
 		t.Fatalf("unavailable reanalysis guidance is not truthful: %q", route.Input)
+	}
+}
+
+func TestVisualModelAssistanceSkipsVisionCapableMainModel(t *testing.T) {
+	workspace := t.TempDir()
+	writeVisionCapableImageRouteConfig(t, workspace)
+	c := &Controller{
+		workspaceRoot: workspace, modelRef: "main/vl", visionModelRef: "vision/evidence",
+		visionDescriber: &routeEvidenceDescriber{},
+	}
+	input := "reanalyze the image"
+	if got := c.injectVisualModelAssistanceWithTool(input, true); got != input {
+		t.Fatalf("vision-capable main model received independent visual guidance: %q", got)
 	}
 }
 
