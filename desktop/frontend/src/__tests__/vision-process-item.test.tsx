@@ -19,7 +19,7 @@ const activeItem: Extract<Item, { kind: "vision" }> = {
     stages: [
       { attempt: 1, stage: "preparing" },
       { attempt: 1, stage: "response", response: "{\"summary\":\"settings dialog\"}" },
-      { attempt: 1, stage: "thinking", reasoning: "checking pixels", elapsed_ms: 1250 },
+      { attempt: 1, stage: "thinking", reasoning: "checking pixels", duration_ms: 1250 },
     ],
   },
 };
@@ -54,6 +54,42 @@ try {
   if (!active.body.textContent?.includes("checking pixels")) throw new Error("vision process must show emitted reasoning");
   if (!active.body.textContent?.includes("{\"summary\":\"settings dialog\"}")) throw new Error("vision process must show emitted response content");
   if (!active.querySelector('.turn-collapse__reasoning-head[data-running]')) throw new Error("active vision stage must reuse the native shimmer head");
+  if (!active.querySelector('[data-vision-stage="thinking"]')?.textContent?.includes("1s")) throw new Error("vision stage must show its own duration");
+
+  const timedItem: Extract<Item, { kind: "vision" }> = {
+    kind: "vision",
+    id: "vision:timed",
+    analysisId: "timed",
+    analysis: {
+      id: "timed",
+      initiator: "host_auto",
+      status: "ready",
+      elapsed_ms: 8200,
+      stages: [
+        { attempt: 1, stage: "preparing", duration_ms: 150, elapsed_ms: 150 },
+        { attempt: 1, stage: "waiting", duration_ms: 2000, elapsed_ms: 8200 },
+        { attempt: 1, stage: "response", duration_ms: 4000, elapsed_ms: 8200 },
+      ],
+    },
+  };
+  const timed = render(timedItem);
+  if (!timed.querySelector('[data-vision-stage="preparing"]')?.textContent?.includes("<1s")) throw new Error("sub-second visual stage must not round up to one second");
+  if (!timed.querySelector('[data-vision-stage="waiting"]')?.textContent?.includes("2s")) throw new Error("waiting stage must show its own duration");
+  if (!timed.querySelector('[data-vision-stage="response"]')?.textContent?.includes("4s")) throw new Error("response stage must not show the total duration");
+
+  const legacy = render({
+    kind: "vision",
+    id: "vision:legacy",
+    analysisId: "legacy",
+    analysis: {
+      id: "legacy",
+      initiator: "host_auto",
+      status: "ready",
+      elapsed_ms: 33000,
+      stages: [{ attempt: 1, stage: "response", elapsed_ms: 33000 }],
+    },
+  });
+  if (legacy.querySelector('[data-vision-stage="response"]')?.textContent?.includes("33s")) throw new Error("legacy cumulative timing must not be presented as a stage duration");
 
   const complete = render(noReasoningItem);
   if (complete.querySelector('[data-vision-content="reasoning"]')) throw new Error("vision process must not fabricate reasoning content");

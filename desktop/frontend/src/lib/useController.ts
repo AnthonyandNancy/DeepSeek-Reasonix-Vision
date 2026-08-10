@@ -232,7 +232,7 @@ export type Item =
   | { kind: "user"; id: string; text: string; submitText?: string; failed?: boolean; createdAt?: number; checkpointTurn?: number }
   | { kind: "assistant"; id: string; text: string; reasoning: string; streaming: boolean; reasoningComplete?: boolean; reasoningDurationMs?: number; workDurationMs?: number; memoryCitations?: MemoryCitation[] }
   | { kind: "phase"; id: string; text: string }
-  | { kind: "vision"; id: string; analysisId: string; analysis: VisualAnalysisRecord; ownerKind?: "user" | "tool"; ownerId?: string }
+  | { kind: "vision"; id: string; analysisId: string; analysis: VisualAnalysisRecord; ownerKind?: "user" | "tool"; ownerId?: string; liveUpdatedAt?: number; liveStageKey?: string }
   | { kind: "notice"; id: string; level: "info" | "warn"; text: string; detail?: string; title?: string; variant?: "delivery"; action?: "continue_delivery"; decisionReceipt?: WireDecisionReceipt }
   | {
       kind: "compaction";
@@ -491,6 +491,17 @@ function reanchorToolVisionItems(items: readonly Item[], toolId: string): Item[]
   return [...without.slice(0, ownerIndex + 1), ...owned, ...without.slice(ownerIndex + 1)];
 }
 
+function updateVisionStageDuration(stages: VisualAnalysisStage[], attempt: number, stageName: string, durationMs: number): void {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return;
+  const index = stages.findIndex((stage) => (stage.attempt ?? 1) === attempt && stage.stage === stageName);
+  if (index < 0) {
+    stages.push({ attempt, stage: stageName, duration_ms: durationMs || undefined });
+    return;
+  }
+  const before = stages[index].duration_ms ?? 0;
+  if (durationMs > before) stages[index] = { ...stages[index], duration_ms: durationMs };
+}
+
 function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State {
   const analysisId = incoming.analysisId?.trim();
   const stageName = incoming.stage?.trim();
@@ -505,6 +516,12 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
   if (incoming.attempt == null && stageName === "preparing" && previous && TERMINAL_VISION_STAGES.has(previous.status)) {
     attempt = Math.max(1, lastAttempt + 1);
   }
+  if (incoming.completedStage) {
+    const completedAttempt = typeof incoming.completedStageAttempt === "number" && incoming.completedStageAttempt > 0
+      ? Math.floor(incoming.completedStageAttempt)
+      : attempt;
+    updateVisionStageDuration(previousStages, completedAttempt, incoming.completedStage, incoming.completedStageElapsedMs ?? 0);
+  }
   const stageIndex = previousStages.findIndex((stage) => (stage.attempt ?? 1) === attempt && stage.stage === stageName);
   const before = stageIndex >= 0 ? previousStages[stageIndex] : undefined;
   const response = tailPreview((before?.response ?? "") + (incoming.responseDelta ?? ""), 12_000);
@@ -516,7 +533,7 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     response: response || undefined,
     reasoning: reasoning || undefined,
     detail: incoming.detail ?? before?.detail,
-    elapsed_ms: Math.max(before?.elapsed_ms ?? 0, incoming.elapsedMs ?? 0) || undefined,
+    duration_ms: Math.max(before?.duration_ms ?? 0, incoming.stageElapsedMs ?? 0) || undefined,
   };
   if (stageIndex >= 0) previousStages[stageIndex] = stage;
   else previousStages.push(stage);
@@ -533,6 +550,7 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
   const initiator = incoming.initiator ?? previous?.initiator ?? "";
   const ownerKind = incoming.ownerKind ?? previousVisionItem?.ownerKind ?? (initiator === "host_auto" ? "user" : undefined);
   const ownerId = incoming.ownerId?.trim() || previousVisionItem?.ownerId || (ownerKind === "user" ? latestUserItemID(s.items) : undefined);
+  const liveUpdatedAt = ACTIVE_VISION_STAGES.has(stageName) ? Date.now() : undefined;
   const item: Extract<Item, { kind: "vision" }> = {
     kind: "vision",
     id: previousItem?.id ?? `vision:${analysisId}`,
@@ -540,6 +558,8 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     analysis,
     ownerKind,
     ownerId,
+    liveUpdatedAt,
+    liveStageKey: liveUpdatedAt === undefined ? undefined : `${attempt}:${stageName}`,
   };
   const items = index >= 0
     ? s.items.map((current, itemIndex) => itemIndex === index ? item : current)

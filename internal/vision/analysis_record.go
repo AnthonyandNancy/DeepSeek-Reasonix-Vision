@@ -37,16 +37,28 @@ type ProgressScope struct {
 }
 
 type progressScopeState struct {
-	mu      sync.Mutex
-	config  ProgressScope
-	attempt int
+	mu               sync.Mutex
+	config           ProgressScope
+	attempt          int
+	attemptStartedAt time.Time
+	timing           progressTiming
 }
 
 func WithProgressScope(ctx context.Context, scope ProgressScope) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return context.WithValue(ctx, progressScopeKey{}, &progressScopeState{config: scope})
+	return context.WithValue(ctx, progressScopeKey{}, &progressScopeState{config: scope, timing: newProgressTiming()})
+}
+
+func ensureProgressScope(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Value(progressScopeKey{}).(*progressScopeState); ok {
+		return ctx
+	}
+	return WithProgressScope(ctx, ProgressScope{})
 }
 
 func emitProgressEvent(ctx context.Context, sink event.Sink, info event.VisionProgressInfo) {
@@ -55,6 +67,7 @@ func emitProgressEvent(ctx context.Context, sink event.Sink, info event.VisionPr
 	}
 	if scope, _ := ctx.Value(progressScopeKey{}).(*progressScopeState); scope != nil {
 		scope.mu.Lock()
+		previousAttempt := scope.attempt
 		if info.Attempt > 0 {
 			scope.attempt = info.Attempt
 		} else if info.Stage == event.VisionStagePreparing {
@@ -62,12 +75,25 @@ func emitProgressEvent(ctx context.Context, sink event.Sink, info event.VisionPr
 		} else if scope.attempt == 0 {
 			scope.attempt = 1
 		}
+		now := time.Now()
+		if scope.attemptStartedAt.IsZero() || scope.attempt != previousAttempt {
+			scope.attemptStartedAt = now
+		}
 		info.AnalysisID = scope.config.AnalysisID
 		info.Initiator = scope.config.Initiator
 		info.OwnerKind = scope.config.OwnerKind
 		info.OwnerID = scope.config.OwnerID
 		info.MediaCount = scope.config.MediaCount
 		info.Attempt = scope.attempt
+		if info.ElapsedMs <= 0 {
+			info.ElapsedMs = max(int64(0), now.Sub(scope.attemptStartedAt).Milliseconds())
+		}
+		timing := scope.timing.observe(info.Attempt, info.Stage, info.ElapsedMs)
+		info.ElapsedMs = timing.totalElapsedMs
+		info.StageElapsedMs = timing.stageElapsedMs
+		info.CompletedStage = timing.completedStage
+		info.CompletedStageAttempt = timing.completedStageAttempt
+		info.CompletedStageElapsedMs = timing.completedStageElapsedMs
 		observe := scope.config.Observe
 		scope.mu.Unlock()
 		if observe != nil {
@@ -119,6 +145,9 @@ func (r *AnalysisRecorder) Observe(info event.VisionProgressInfo) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if info.CompletedStage != "" {
+		r.updateStageDurationLocked(info.CompletedStageAttempt, info.CompletedStage, info.CompletedStageElapsedMs)
+	}
 	attempt := info.Attempt
 	if attempt <= 0 {
 		attempt = 1
@@ -149,8 +178,8 @@ func (r *AnalysisRecorder) Observe(info event.VisionProgressInfo) {
 	if info.Detail != "" {
 		row.Detail = truncateAnalysisText(info.Detail, maxAnalysisDetailBytes)
 	}
-	if info.ElapsedMs > row.ElapsedMs {
-		row.ElapsedMs = info.ElapsedMs
+	if info.StageElapsedMs > row.DurationMs {
+		row.DurationMs = info.StageElapsedMs
 	}
 	if info.ElapsedMs > r.record.ElapsedMs {
 		r.record.ElapsedMs = info.ElapsedMs
@@ -159,6 +188,31 @@ func (r *AnalysisRecorder) Observe(info event.VisionProgressInfo) {
 	if stage == string(event.VisionStageReady) || stage == string(event.VisionStageFailed) || stage == string(event.VisionStageCancelled) {
 		r.record.CompletedAt = time.Now().UnixMilli()
 	}
+}
+
+func (r *AnalysisRecorder) updateStageDurationLocked(attempt int, stage event.VisionProgressStage, duration int64) {
+	if r == nil || stage == "" || duration < 0 {
+		return
+	}
+	if attempt <= 0 {
+		attempt = 1
+	}
+	for index := len(r.record.Stages) - 1; index >= 0; index-- {
+		row := &r.record.Stages[index]
+		if row.Attempt != attempt || row.Stage != string(stage) {
+			continue
+		}
+		if duration > row.DurationMs {
+			row.DurationMs = duration
+		}
+		return
+	}
+	if len(r.record.Stages) >= maxAnalysisStages {
+		return
+	}
+	r.record.Stages = append(r.record.Stages, provider.VisualAnalysisStage{
+		Attempt: attempt, Stage: string(stage), DurationMs: duration,
+	})
 }
 
 func (r *AnalysisRecorder) Snapshot(evidence Evidence, renderedEvidence string) provider.VisualAnalysisRecord {

@@ -553,18 +553,22 @@ type Event struct {
 }
 
 type VisionProgressInfo struct {
-	Stage          VisionProgressStage
-	AnalysisID     string
-	Initiator      string
-	OwnerKind      VisionProgressOwnerKind
-	OwnerID        string
-	Attempt        int
-	MediaCount     int
-	ModelRef       string
-	ResponseDelta  string
-	ReasoningDelta string
-	Detail         string
-	ElapsedMs      int64
+	Stage                   VisionProgressStage
+	AnalysisID              string
+	Initiator               string
+	OwnerKind               VisionProgressOwnerKind
+	OwnerID                 string
+	Attempt                 int
+	MediaCount              int
+	ModelRef                string
+	ResponseDelta           string
+	ReasoningDelta          string
+	Detail                  string
+	ElapsedMs               int64
+	StageElapsedMs          int64
+	CompletedStage          VisionProgressStage
+	CompletedStageAttempt   int
+	CompletedStageElapsedMs int64
 }
 
 // ReadinessAuditSink is an optional sink capability. Sinks that do not care

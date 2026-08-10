@@ -52,6 +52,10 @@ export interface WireVisionProgress {
   reasoningDelta?: string;
   detail?: string;
   elapsedMs?: number;
+  stageElapsedMs?: number;
+  completedStage?: string;
+  completedStageAttempt?: number;
+  completedStageElapsedMs?: number;
 }
 
 export interface VisualAnalysisStage {
@@ -60,6 +64,7 @@ export interface VisualAnalysisStage {
   response?: string;
   reasoning?: string;
   detail?: string;
+  duration_ms?: number;
   elapsed_ms?: number;
 }
 

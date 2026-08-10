@@ -173,6 +173,12 @@ function formatWorkDuration(durationMs: number, t: ReturnType<typeof useT>): str
   return t("transcript.durationMinutesSeconds", { m: minutes, s: seconds });
 }
 
+function formatVisionStageDuration(durationMs: number, t: ReturnType<typeof useT>): string {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return "";
+  if (durationMs < 1000) return `<${t("transcript.durationSeconds", { s: 1 })}`;
+  return formatWorkDuration(durationMs, t);
+}
+
 function workStatusLabel(durationMs: number, running: boolean, t: ReturnType<typeof useT>): string {
   const duration = formatWorkDuration(durationMs, t);
   if (running) {
@@ -1718,14 +1724,14 @@ function visionStageDetail(stage: string, t: ReturnType<typeof useT>, model: str
   return parts.join(" · ");
 }
 
-function VisionStageItem({ stage, active, model }: { stage: VisualAnalysisStage; active: boolean; model: string }) {
+function VisionStageItem({ stage, active, model, durationMs }: { stage: VisualAnalysisStage; active: boolean; model: string; durationMs?: number }) {
   const t = useT();
   const [open, setOpen] = useState(true);
   const bodyRef = useRef<HTMLDivElement>(null);
   useGSAPCollapse(bodyRef, open);
   const response = stage.response?.trim() ?? "";
   const reasoning = stage.reasoning?.trim() ?? "";
-  const duration = formatWorkDuration(stage.elapsed_ms ?? 0, t);
+  const duration = formatVisionStageDuration(durationMs ?? stage.duration_ms ?? 0, t);
   return (
     <div className={`turn-collapse__reasoning-phase${open ? " turn-collapse__reasoning-phase--open" : ""}`} data-vision-stage={stage.stage}>
       <button
@@ -1774,6 +1780,7 @@ export function VisionProcessItem({ item }: { item: VisionItem }) {
   const t = useT();
   const analysis: VisualAnalysisRecord = item.analysis;
   const running = isVisionRunningStatus(analysis.status);
+  const liveNow = useTick(running);
   const model = analysis.model_ref?.trim() ?? "";
   const stages = analysis.stages?.length ? analysis.stages : [{ stage: analysis.status }];
   let currentIndex = -1;
@@ -1783,7 +1790,8 @@ export function VisionProcessItem({ item }: { item: VisionItem }) {
       break;
     }
   }
-  const duration = formatWorkDuration(analysis.elapsed_ms ?? 0, t);
+  const liveExtraMs = running && item.liveUpdatedAt ? Math.max(0, liveNow - item.liveUpdatedAt) : 0;
+  const duration = formatWorkDuration((analysis.elapsed_ms ?? 0) + liveExtraMs, t);
   return (
     <section className="vision-process" role="status" aria-live="polite" data-status={analysis.status}>
       <div className="vision-process__overview">
@@ -1796,7 +1804,16 @@ export function VisionProcessItem({ item }: { item: VisionItem }) {
       </div>
       <div className="vision-process__stages">
         {stages.map((stage, index) => (
-          <VisionStageItem key={`${stage.attempt ?? 1}-${stage.stage}-${index}`} stage={stage} active={running && index === currentIndex} model={model} />
+          <VisionStageItem
+            key={`${stage.attempt ?? 1}-${stage.stage}-${index}`}
+            stage={stage}
+            active={running && index === currentIndex}
+            model={model}
+            durationMs={
+              (stage.duration_ms ?? 0)
+              + (running && index === currentIndex && item.liveStageKey === `${stage.attempt ?? 1}:${stage.stage}` ? liveExtraMs : 0)
+            }
+          />
         ))}
       </div>
       <VisionResultSection label={t("summary.detail")} value={analysis.summary ?? ""} kind="summary" />

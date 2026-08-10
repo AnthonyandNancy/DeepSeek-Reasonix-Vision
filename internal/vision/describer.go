@@ -103,6 +103,7 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 	if d == nil || d.prov == nil {
 		return Evidence{}, nil, errors.New("vision: describer unavailable")
 	}
+	ctx = ensureProgressScope(ctx)
 	started := time.Now()
 	modelRef = strings.TrimSpace(modelRef)
 	d.emitProgress(ctx, modelRef, event.VisionStagePreparing, started, "", "", "")

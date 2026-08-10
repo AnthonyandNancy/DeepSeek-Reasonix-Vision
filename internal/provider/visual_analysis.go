@@ -3,12 +3,14 @@ package provider
 // VisualAnalysisStage is one bounded lifecycle row from an independent visual
 // model request. It is local transcript metadata and never enters provider input.
 type VisualAnalysisStage struct {
-	Attempt   int    `json:"attempt,omitempty"`
-	Stage     string `json:"stage"`
-	Response  string `json:"response,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-	ElapsedMs int64  `json:"elapsed_ms,omitempty"`
+	Attempt    int    `json:"attempt,omitempty"`
+	Stage      string `json:"stage"`
+	Response   string `json:"response,omitempty"`
+	Reasoning  string `json:"reasoning,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
+	// ElapsedMs is retained for sessions written before per-stage durations.
+	ElapsedMs int64 `json:"elapsed_ms,omitempty"`
 }
 
 // VisualAnalysisRecord is the durable local transcript representation of one

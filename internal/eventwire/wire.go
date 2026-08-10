@@ -47,18 +47,22 @@ type StreamAttempt struct {
 }
 
 type VisionProgress struct {
-	Stage          string `json:"stage"`
-	AnalysisID     string `json:"analysisId,omitempty"`
-	Initiator      string `json:"initiator,omitempty"`
-	OwnerKind      string `json:"ownerKind,omitempty"`
-	OwnerID        string `json:"ownerId,omitempty"`
-	Attempt        int    `json:"attempt,omitempty"`
-	MediaCount     int    `json:"mediaCount,omitempty"`
-	ModelRef       string `json:"modelRef,omitempty"`
-	ResponseDelta  string `json:"responseDelta,omitempty" externalizable:"true"`
-	ReasoningDelta string `json:"reasoningDelta,omitempty" externalizable:"true"`
-	Detail         string `json:"detail,omitempty"`
-	ElapsedMs      int64  `json:"elapsedMs,omitempty"`
+	Stage                   string `json:"stage"`
+	AnalysisID              string `json:"analysisId,omitempty"`
+	Initiator               string `json:"initiator,omitempty"`
+	OwnerKind               string `json:"ownerKind,omitempty"`
+	OwnerID                 string `json:"ownerId,omitempty"`
+	Attempt                 int    `json:"attempt,omitempty"`
+	MediaCount              int    `json:"mediaCount,omitempty"`
+	ModelRef                string `json:"modelRef,omitempty"`
+	ResponseDelta           string `json:"responseDelta,omitempty" externalizable:"true"`
+	ReasoningDelta          string `json:"reasoningDelta,omitempty" externalizable:"true"`
+	Detail                  string `json:"detail,omitempty"`
+	ElapsedMs               int64  `json:"elapsedMs,omitempty"`
+	StageElapsedMs          int64  `json:"stageElapsedMs,omitempty"`
+	CompletedStage          string `json:"completedStage,omitempty"`
+	CompletedStageAttempt   int    `json:"completedStageAttempt,omitempty"`
+	CompletedStageElapsedMs int64  `json:"completedStageElapsedMs,omitempty"`
 }
 
 // ToWire converts a typed runtime event into the shared frontend JSON contract.
@@ -184,7 +188,9 @@ func ToWire(e event.Event) Event {
 				OwnerKind: string(p.OwnerKind), OwnerID: p.OwnerID,
 				Attempt: p.Attempt, MediaCount: p.MediaCount, ModelRef: p.ModelRef,
 				ResponseDelta: p.ResponseDelta, ReasoningDelta: p.ReasoningDelta,
-				Detail: p.Detail, ElapsedMs: p.ElapsedMs,
+				Detail: p.Detail, ElapsedMs: p.ElapsedMs, StageElapsedMs: p.StageElapsedMs,
+				CompletedStage: string(p.CompletedStage), CompletedStageAttempt: p.CompletedStageAttempt,
+				CompletedStageElapsedMs: p.CompletedStageElapsedMs,
 			}
 		}
 	}

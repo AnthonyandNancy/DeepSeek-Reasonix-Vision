@@ -35,6 +35,79 @@ func TestProgressScopeAssignsIdentityAndAttempts(t *testing.T) {
 	}
 }
 
+func TestProgressScopeTracksOwnStageDurationsSeparatelyFromTotal(t *testing.T) {
+	var observed []event.VisionProgressInfo
+	r := NewAnalysisRecorder("vision-timing", "host_auto", "provider/vision", nil, 1)
+	ctx := WithProgressScope(context.Background(), ProgressScope{
+		AnalysisID: "vision-timing", Initiator: "host_auto", Observe: func(info event.VisionProgressInfo) {
+			observed = append(observed, info)
+			r.Observe(info)
+		},
+	})
+
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStagePreparing, Attempt: 1, ElapsedMs: 0})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageConnecting, Attempt: 1, ElapsedMs: 150})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageWaiting, Attempt: 1, ElapsedMs: 2_150})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageResponse, Attempt: 1, ElapsedMs: 3_150})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageResponse, Attempt: 1, ElapsedMs: 5_150})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageThinking, Attempt: 1, ElapsedMs: 6_150})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageResponse, Attempt: 1, ElapsedMs: 7_150})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageParsing, Attempt: 1, ElapsedMs: 8_150})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageReady, Attempt: 1, ElapsedMs: 8_200})
+
+	if len(observed) != 9 {
+		t.Fatalf("observed progress = %d, want 9", len(observed))
+	}
+	if got := observed[1]; got.CompletedStage != event.VisionStagePreparing || got.CompletedStageElapsedMs != 150 || got.StageElapsedMs != 0 {
+		t.Fatalf("connecting timing = %+v", got)
+	}
+	if got := observed[5]; got.CompletedStage != event.VisionStageResponse || got.CompletedStageElapsedMs != 3_000 || got.StageElapsedMs != 0 {
+		t.Fatalf("thinking timing = %+v", got)
+	}
+	if got := observed[7]; got.CompletedStage != event.VisionStageResponse || got.CompletedStageElapsedMs != 4_000 || got.StageElapsedMs != 0 {
+		t.Fatalf("parsing timing = %+v", got)
+	}
+
+	got := r.Snapshot(Evidence{}, "")
+	if got.ElapsedMs != 8_200 {
+		t.Fatalf("total elapsed = %d, want 8200", got.ElapsedMs)
+	}
+	want := []int64{150, 2_000, 1_000, 4_000, 1_000, 50, 0}
+	if len(got.Stages) != len(want) {
+		t.Fatalf("stages = %+v, want %d rows", got.Stages, len(want))
+	}
+	for i, duration := range want {
+		if got.Stages[i].DurationMs != duration {
+			t.Fatalf("stage %d (%s) duration = %d, want %d", i, got.Stages[i].Stage, got.Stages[i].DurationMs, duration)
+		}
+	}
+}
+
+func TestProgressScopeKeepsRetryTimingMonotonicAcrossAttemptClocks(t *testing.T) {
+	var observed []event.VisionProgressInfo
+	ctx := WithProgressScope(context.Background(), ProgressScope{
+		AnalysisID: "vision-retry-timing", Observe: func(info event.VisionProgressInfo) {
+			observed = append(observed, info)
+		},
+	})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStagePreparing, Attempt: 1, ElapsedMs: 0})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageResponse, Attempt: 1, ElapsedMs: 1_000})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageFailed, Attempt: 1, ElapsedMs: 2_000})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStagePreparing, Attempt: 2, ElapsedMs: 0})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageResponse, Attempt: 2, ElapsedMs: 500})
+	EmitProgress(ctx, nil, event.VisionProgressInfo{Stage: event.VisionStageReady, Attempt: 2, ElapsedMs: 700})
+
+	if len(observed) != 6 {
+		t.Fatalf("observed progress = %d, want 6", len(observed))
+	}
+	if observed[3].ElapsedMs != 2_000 || observed[4].ElapsedMs != 2_500 || observed[5].ElapsedMs != 2_700 {
+		t.Fatalf("retry total elapsed = %+v", observed)
+	}
+	if observed[4].StageElapsedMs != 0 || observed[5].CompletedStageElapsedMs != 200 {
+		t.Fatalf("retry stage timing = %+v", observed)
+	}
+}
+
 func TestAnalysisRecorderMergesLifecycleIntoDurableRecord(t *testing.T) {
 	r := NewAnalysisRecorder("vision-1", "host_auto", "provider/vision", []string{"@shot.png"}, 1)
 	ctx := WithProgressScope(context.Background(), ProgressScope{

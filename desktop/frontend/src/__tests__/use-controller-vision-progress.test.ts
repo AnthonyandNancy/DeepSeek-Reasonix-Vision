@@ -28,7 +28,8 @@ function visionItems(state: typeof initialState) {
     analysis: {
       status: string;
       media_count?: number;
-      stages: Array<{ attempt?: number; stage: string; response?: string; reasoning?: string }>;
+      elapsed_ms?: number;
+      stages: Array<{ attempt?: number; stage: string; response?: string; reasoning?: string; duration_ms?: number }>;
     };
   }>;
 }
@@ -153,7 +154,7 @@ const hydrated = historyMessagesToItems([
       status: "ready",
       model_ref: "vision/history",
       media_count: 1,
-      stages: [{ attempt: 1, stage: "ready", response: "user evidence" }],
+      stages: [{ attempt: 1, stage: "ready", response: "user evidence", duration_ms: 50 }],
       summary: "dialog",
     }],
   },
@@ -178,9 +179,23 @@ const hydrated = historyMessagesToItems([
 ] as unknown as HistoryMessage[], "h").items;
 eq(hydrated.map((item) => item.kind).join(">"), "user>vision>tool>vision", "history restores visual items immediately after their user or tool owner");
 eq((hydrated[1] as { analysis?: { summary?: string } }).analysis?.summary, "dialog", "history restores visual summary");
+eq((hydrated[1] as { analysis?: { stages?: Array<{ duration_ms?: number }> } }).analysis?.stages?.[0]?.duration_ms, 50, "history restores visual stage durations");
 eq((hydrated[3] as { analysis?: { ocr_text?: string } } | undefined)?.analysis?.ocr_text, "Save", "history restores tool visual OCR");
 eq(hydrated[1]?.kind === "vision" ? `${hydrated[1].ownerKind}:${hydrated[1].ownerId}` : "", `user:${hydrated[0]?.id}`, "history records the owning user anchor");
 eq(hydrated[3]?.kind === "vision" ? `${hydrated[3].ownerKind}:${hydrated[3].ownerId}` : "", "tool:call-1", "history records the owning tool anchor");
+
+let timed = reducer(initialState, { type: "user", text: "time each visual stage", seq: initialState.seq });
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "preparing", elapsedMs: 100, stageElapsedMs: 0 }));
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "connecting", elapsedMs: 150, stageElapsedMs: 0, completedStage: "preparing", completedStageAttempt: 1, completedStageElapsedMs: 150 }));
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "waiting", elapsedMs: 2150, stageElapsedMs: 0, completedStage: "connecting", completedStageAttempt: 1, completedStageElapsedMs: 2000 }));
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "response", elapsedMs: 3150, stageElapsedMs: 0, completedStage: "waiting", completedStageAttempt: 1, completedStageElapsedMs: 1000 }));
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "response", elapsedMs: 5150, stageElapsedMs: 2000 }));
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "thinking", elapsedMs: 6150, stageElapsedMs: 0, completedStage: "response", completedStageAttempt: 1, completedStageElapsedMs: 3000 }));
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "response", elapsedMs: 7150, stageElapsedMs: 3000, completedStage: "thinking", completedStageAttempt: 1, completedStageElapsedMs: 1000 }));
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "parsing", elapsedMs: 8150, stageElapsedMs: 0, completedStage: "response", completedStageAttempt: 1, completedStageElapsedMs: 4000 }));
+timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage: "ready", elapsedMs: 8200, stageElapsedMs: 0, completedStage: "parsing", completedStageAttempt: 1, completedStageElapsedMs: 50 }));
+eq(visionItems(timed)[0]?.analysis.elapsed_ms, 8200, "visual analysis keeps the total elapsed duration");
+eq(visionItems(timed)[0]?.analysis.stages.map((stage) => stage.duration_ms ?? 0).join(","), "150,2000,1000,4000,1000,50,0", "visual stages retain their own durations");
 
 eq(staleTurnWatchdogDelay({ running: true, turnActive: true }, 20_000, 30_000), 20_000, "recent vision activity re-arms the watchdog for the remaining interval");
 eq(staleTurnWatchdogDelay({ running: true, turnActive: true }, 20_000, 50_000), 0, "watchdog reconciles after the re-armed interval expires");
