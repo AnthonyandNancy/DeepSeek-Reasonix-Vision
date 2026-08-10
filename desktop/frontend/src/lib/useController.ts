@@ -491,7 +491,11 @@ function reanchorToolVisionItems(items: readonly Item[], toolId: string): Item[]
   return [...without.slice(0, ownerIndex + 1), ...owned, ...without.slice(ownerIndex + 1)];
 }
 
-function updateVisionStageDuration(stages: VisualAnalysisStage[], attempt: number, stageName: string, durationMs: number): void {
+function isVisionDuration(durationMs: number | undefined): durationMs is number {
+  return typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0;
+}
+
+function updateVisionStageDuration(stages: VisualAnalysisStage[], attempt: number, stageName: string, durationMs: number, authoritative = false): void {
   if (!Number.isFinite(durationMs) || durationMs < 0) return;
   const index = stages.findIndex((stage) => (stage.attempt ?? 1) === attempt && stage.stage === stageName);
   if (index < 0) {
@@ -499,7 +503,20 @@ function updateVisionStageDuration(stages: VisualAnalysisStage[], attempt: numbe
     return;
   }
   const before = stages[index].duration_ms ?? 0;
-  if (durationMs > before) stages[index] = { ...stages[index], duration_ms: durationMs };
+  if (authoritative || durationMs > before) stages[index] = { ...stages[index], duration_ms: durationMs || undefined };
+}
+
+function snapshotLiveVisionProgress(item: Extract<Item, { kind: "vision" }> | undefined, now: number): { stages: VisualAnalysisStage[]; elapsedMs: number } {
+  const stages = asArray(item?.analysis.stages).map((stage) => ({ ...stage }));
+  const elapsedMs = item?.analysis.elapsed_ms ?? 0;
+  if (!item?.liveStageKey || item.liveUpdatedAt === undefined) return { stages, elapsedMs };
+  const intervalMs = Math.max(0, now - item.liveUpdatedAt);
+  if (intervalMs === 0) return { stages, elapsedMs };
+  const stageIndex = stages.findIndex((stage) => `${stage.attempt ?? 1}:${stage.stage}` === item.liveStageKey);
+  if (stageIndex < 0) return { stages, elapsedMs };
+  const stage = stages[stageIndex];
+  stages[stageIndex] = { ...stage, duration_ms: (stage.duration_ms ?? 0) + intervalMs };
+  return { stages, elapsedMs: elapsedMs + intervalMs };
 }
 
 function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State {
@@ -510,7 +527,9 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
   const previousItem = index >= 0 ? s.items[index] : undefined;
   const previousVisionItem = previousItem?.kind === "vision" ? previousItem : undefined;
   const previous = previousVisionItem?.analysis;
-  const previousStages = asArray(previous?.stages).map((stage) => ({ ...stage }));
+  const now = Date.now();
+  const liveSnapshot = snapshotLiveVisionProgress(previousVisionItem, now);
+  const previousStages = liveSnapshot.stages;
   const lastAttempt = previousStages.reduce((attempt, stage) => Math.max(attempt, stage.attempt ?? 1), 0);
   let attempt = typeof incoming.attempt === "number" && incoming.attempt > 0 ? Math.floor(incoming.attempt) : Math.max(1, lastAttempt);
   if (incoming.attempt == null && stageName === "preparing" && previous && TERMINAL_VISION_STAGES.has(previous.status)) {
@@ -520,7 +539,11 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     const completedAttempt = typeof incoming.completedStageAttempt === "number" && incoming.completedStageAttempt > 0
       ? Math.floor(incoming.completedStageAttempt)
       : attempt;
-    updateVisionStageDuration(previousStages, completedAttempt, incoming.completedStage, incoming.completedStageElapsedMs ?? 0);
+    if (isVisionDuration(incoming.completedStageElapsedMs)) {
+      updateVisionStageDuration(previousStages, completedAttempt, incoming.completedStage, incoming.completedStageElapsedMs, true);
+    } else {
+      updateVisionStageDuration(previousStages, completedAttempt, incoming.completedStage, 0);
+    }
   }
   const stageIndex = previousStages.findIndex((stage) => (stage.attempt ?? 1) === attempt && stage.stage === stageName);
   const before = stageIndex >= 0 ? previousStages[stageIndex] : undefined;
@@ -533,7 +556,7 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     response: response || undefined,
     reasoning: reasoning || undefined,
     detail: incoming.detail ?? before?.detail,
-    duration_ms: Math.max(before?.duration_ms ?? 0, incoming.stageElapsedMs ?? 0) || undefined,
+    duration_ms: isVisionDuration(incoming.stageElapsedMs) ? incoming.stageElapsedMs || undefined : before?.duration_ms,
   };
   if (stageIndex >= 0) previousStages[stageIndex] = stage;
   else previousStages.push(stage);
@@ -545,12 +568,15 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     status: stageName,
     media_count: incoming.mediaCount ?? previous?.media_count,
     stages: previousStages,
-    elapsed_ms: Math.max(previous?.elapsed_ms ?? 0, incoming.elapsedMs ?? 0) || undefined,
+    elapsed_ms: (isVisionDuration(incoming.elapsedMs) ? incoming.elapsedMs : liveSnapshot.elapsedMs) || undefined,
   };
   const initiator = incoming.initiator ?? previous?.initiator ?? "";
   const ownerKind = incoming.ownerKind ?? previousVisionItem?.ownerKind ?? (initiator === "host_auto" ? "user" : undefined);
   const ownerId = incoming.ownerId?.trim() || previousVisionItem?.ownerId || (ownerKind === "user" ? latestUserItemID(s.items) : undefined);
-  const liveUpdatedAt = ACTIVE_VISION_STAGES.has(stageName) ? Date.now() : undefined;
+  const liveStageKey = `${attempt}:${stageName}`;
+  const liveUpdatedAt = ACTIVE_VISION_STAGES.has(stageName)
+    ? Math.max(previousVisionItem?.liveUpdatedAt ?? now, now)
+    : undefined;
   const item: Extract<Item, { kind: "vision" }> = {
     kind: "vision",
     id: previousItem?.id ?? `vision:${analysisId}`,
@@ -559,7 +585,7 @@ function upsertVisionProgressItem(s: State, incoming: WireVisionProgress): State
     ownerKind,
     ownerId,
     liveUpdatedAt,
-    liveStageKey: liveUpdatedAt === undefined ? undefined : `${attempt}:${stageName}`,
+    liveStageKey: liveUpdatedAt === undefined ? undefined : liveStageKey,
   };
   const items = index >= 0
     ? s.items.map((current, itemIndex) => itemIndex === index ? item : current)

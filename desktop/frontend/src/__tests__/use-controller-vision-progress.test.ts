@@ -197,6 +197,67 @@ timed = event(timed, visionEvent({ analysisId: "timed-vision", attempt: 1, stage
 eq(visionItems(timed)[0]?.analysis.elapsed_ms, 8200, "visual analysis keeps the total elapsed duration");
 eq(visionItems(timed)[0]?.analysis.stages.map((stage) => stage.duration_ms ?? 0).join(","), "150,2000,1000,4000,1000,50,0", "visual stages retain their own durations");
 
+const originalNow = Date.now;
+let now = 1_000;
+Date.now = () => now;
+try {
+  let legacy = reducer(initialState, { type: "user", text: "legacy timing", seq: initialState.seq });
+  legacy = event(legacy, visionEvent({ analysisId: "legacy-live", attempt: 1, stage: "preparing" }));
+  now = 1_100;
+  legacy = event(legacy, visionEvent({ analysisId: "legacy-live", attempt: 1, stage: "connecting" }));
+  now = 5_100;
+  legacy = event(legacy, visionEvent({ analysisId: "legacy-live", attempt: 1, stage: "connecting" }));
+  now = 7_100;
+  legacy = event(legacy, visionEvent({ analysisId: "legacy-live", attempt: 1, stage: "failed" }));
+  eq(visionItems(legacy)[0]?.analysis.stages.find((stage) => stage.stage === "connecting")?.duration_ms, 6_000, "legacy progress keeps a monotonic stage duration");
+} finally {
+  Date.now = originalNow;
+}
+
+const backendTimingOriginalNow = Date.now;
+let backendTimingNow = 1_000;
+Date.now = () => backendTimingNow;
+try {
+  let backendTiming = reducer(initialState, { type: "user", text: "backend timing", seq: initialState.seq });
+  backendTiming = event(backendTiming, visionEvent({ analysisId: "backend-live", attempt: 1, stage: "preparing" }));
+  backendTimingNow = 11_000;
+  backendTiming = event(backendTiming, visionEvent({ analysisId: "backend-live", attempt: 1, stage: "preparing", elapsedMs: 200, stageElapsedMs: 100 }));
+  eq(visionItems(backendTiming)[0]?.analysis.elapsed_ms, 200, "explicit backend elapsed time wins over local delivery delay");
+  eq(visionItems(backendTiming)[0]?.analysis.stages.find((stage) => stage.stage === "preparing")?.duration_ms, 100, "explicit backend stage time wins over local delivery delay");
+} finally {
+  Date.now = backendTimingOriginalNow;
+}
+
+const clockRegressionOriginalNow = Date.now;
+let clockRegressionNow = 10_000;
+Date.now = () => clockRegressionNow;
+try {
+  let clockRegression = reducer(initialState, { type: "user", text: "clock regression", seq: initialState.seq });
+  clockRegression = event(clockRegression, visionEvent({ analysisId: "clock-regression", attempt: 1, stage: "preparing" }));
+  clockRegressionNow = 9_000;
+  clockRegression = event(clockRegression, visionEvent({ analysisId: "clock-regression", attempt: 1, stage: "preparing" }));
+  clockRegressionNow = 10_000;
+  clockRegression = event(clockRegression, visionEvent({ analysisId: "clock-regression", attempt: 1, stage: "preparing" }));
+  eq(visionItems(clockRegression)[0]?.analysis.stages.find((stage) => stage.stage === "preparing")?.duration_ms ?? 0, 0, "clock regression does not inflate a repeated live stage");
+} finally {
+  Date.now = clockRegressionOriginalNow;
+}
+
+const crossStageClockOriginalNow = Date.now;
+let crossStageClockNow = 10_000;
+Date.now = () => crossStageClockNow;
+try {
+  let crossStageClock = reducer(initialState, { type: "user", text: "cross-stage clock rollback", seq: initialState.seq });
+  crossStageClock = event(crossStageClock, visionEvent({ analysisId: "cross-stage-clock", attempt: 1, stage: "preparing" }));
+  crossStageClockNow = 9_000;
+  crossStageClock = event(crossStageClock, visionEvent({ analysisId: "cross-stage-clock", attempt: 1, stage: "connecting" }));
+  crossStageClockNow = 10_000;
+  crossStageClock = event(crossStageClock, visionEvent({ analysisId: "cross-stage-clock", attempt: 1, stage: "connecting" }));
+  eq(visionItems(crossStageClock)[0]?.analysis.stages.find((stage) => stage.stage === "connecting")?.duration_ms ?? 0, 0, "clock rollback does not inflate a new live stage");
+} finally {
+  Date.now = crossStageClockOriginalNow;
+}
+
 eq(staleTurnWatchdogDelay({ running: true, turnActive: true }, 20_000, 30_000), 20_000, "recent vision activity re-arms the watchdog for the remaining interval");
 eq(staleTurnWatchdogDelay({ running: true, turnActive: true }, 20_000, 50_000), 0, "watchdog reconciles after the re-armed interval expires");
 eq(staleTurnWatchdogDelay({ running: true, turnActive: true }, 20_000, 60_000, 30_000, 50_000), 20_000, "a completed reconciliation probe re-arms the watchdog with backoff");
