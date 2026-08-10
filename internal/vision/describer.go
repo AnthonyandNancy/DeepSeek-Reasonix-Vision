@@ -42,7 +42,7 @@ func DescriberEmitsVisionProgress(d Describer) bool {
 var ErrUnexpectedVisionToolCall = errors.New("vision model returned an unexpected tool call")
 
 const (
-	defaultTimeout   = 60 * time.Second
+	defaultTimeout   = 180 * time.Second
 	defaultMaxTokens = 6144
 )
 

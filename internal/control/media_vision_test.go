@@ -353,6 +353,9 @@ func TestHistoricalStoredImageWinsOverStaleTextPath(t *testing.T) {
 	}
 }
 
+// A media-free turn no longer advertises the visual bridge, so the injection
+// mechanics ride an explicit reanalysis request instead: exactly one block,
+// strippable for the UI, and never folded into the cache-stable prefix.
 func TestVisualModelAssistanceIsInjectedIntoMainModelUserTurn(t *testing.T) {
 	workspace := t.TempDir()
 	writeImageRouteConfig(t, workspace)
@@ -364,7 +367,7 @@ func TestVisualModelAssistanceIsInjectedIntoMainModelUserTurn(t *testing.T) {
 	})
 	beforeSystem := exec.Session().Snapshot()[0].Content
 
-	if err := c.Run(context.Background(), "读取媒体工具返回的图片并完成任务"); err != nil {
+	if err := c.Run(context.Background(), "重新分析这张图片"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if strings.Count(runner.input, "<visual-model-assistance") != 1 {
@@ -376,7 +379,7 @@ func TestVisualModelAssistanceIsInjectedIntoMainModelUserTurn(t *testing.T) {
 	if strings.Contains(strings.ToLower(runner.input), "mcp") || strings.Contains(runner.input, "Do not call") {
 		t.Fatalf("visual assistance guidance should not mention or prohibit MCP:\n%s", runner.input)
 	}
-	if got := agent.StripTransientUserBlocks(runner.input); got != "读取媒体工具返回的图片并完成任务" {
+	if got := agent.StripTransientUserBlocks(runner.input); got != "重新分析这张图片" {
 		t.Fatalf("transient visual guidance leaked into user text: %q", got)
 	}
 	if got := exec.Session().Snapshot()[0].Content; got != beforeSystem {
@@ -479,6 +482,91 @@ func TestVisualModelAssistanceIsNotSuppressedByUserTagText(t *testing.T) {
 	}
 	if !strings.Contains(got, input) {
 		t.Fatalf("user tag text was not preserved: %q", got)
+	}
+}
+
+// Pasting an old vision conversation as plain text is not media. A standing
+// analyze_media_with_vision line would push the text-only main model onto
+// whichever visual tool still answers, and the first-party one fails without
+// conversation media — so it lands on an MCP tool instead.
+func TestPastedVisionProseTurnGetsNoVisualBridgeGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	c := New(Options{
+		WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+	pasted := "图中显示的是一辆理想 L9（Li Auto L9）——一辆深绿色的 SUV。\n" +
+		"图中带有“豆包AI生成”的水印。\n" +
+		`{"summary":"Screenshot of a Chinese messaging app","ocr":{"full_text":"理想L9"}}`
+
+	media := c.resolveMediaForTurn(pasted)
+	if len(media.Images) != 0 || media.ReanalysisRequested {
+		t.Fatalf("pasted prose resolved as media: images=%d reanalysis=%v", len(media.Images), media.ReanalysisRequested)
+	}
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, pasted, pasted, media)
+	if route.Input != pasted {
+		t.Fatalf("media-free turn was rewritten:\n%s", route.Input)
+	}
+	if strings.Contains(route.Input, "analyze_media_with_vision") {
+		t.Fatalf("media-free turn was told to call the visual tool:\n%s", route.Input)
+	}
+}
+
+func TestUnrelatedTurnGetsNoVisualBridgeGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	c := New(Options{
+		WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+	input := "你好，帮我写个快速排序"
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, input, input, c.resolveMediaForTurn(input))
+	if strings.Contains(route.Input, "visual-model-assistance") {
+		t.Fatalf("unrelated coding turn received visual guidance:\n%s", route.Input)
+	}
+}
+
+// The bridge must still be announced when the turn actually carries media, so
+// the main model reads the injected ModLens evidence as this turn's pixels.
+func TestAttachedImageTurnKeepsVisualBridgeGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	c := New(Options{
+		WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "分析图片 @fresh.png", "分析图片", MediaTurnResolution{
+		Images: []ResolvedImage{{Ref: "fresh.png", DataURL: "data:image/png;base64," + tinyPNG}},
+	})
+	if route.Mode != ImageRouteVisionEvidence {
+		t.Fatalf("route mode = %v, want independent visual evidence", route.Mode)
+	}
+	if !strings.Contains(route.Input, "visual-model-assistance") {
+		t.Fatalf("attachment turn lost visual guidance:\n%s", route.Input)
+	}
+}
+
+// An explicit "reanalyze that image" request carries no attachment, so the tool
+// path stays advertised even though resolveMediaForTurn found no bytes.
+func TestExplicitReanalysisKeepsVisualToolGuidance(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	sess := agent.NewSession("system")
+	sess.Add(provider.Message{Role: provider.RoleUser, Images: []string{"data:image/png;base64," + tinyPNG}})
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{
+		Executor: exec, WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+	input := "重新分析这张图片"
+	media := c.resolveMediaForTurn(input)
+	if !media.ReanalysisRequested {
+		t.Fatalf("explicit reanalysis was not detected")
+	}
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, input, input, media)
+	if !strings.Contains(route.Input, "analyze_media_with_vision") {
+		t.Fatalf("explicit reanalysis lost the visual tool guidance:\n%s", route.Input)
 	}
 }
 

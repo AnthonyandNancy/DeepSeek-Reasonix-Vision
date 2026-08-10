@@ -82,31 +82,7 @@ func EffectiveVision(e *ProviderEntry) bool {
 	if e.Vision {
 		return true
 	}
-	if isOfficialMimoVisionEntry(e) {
-		return true
-	}
-	return hasKnownVisionCapableModel(e)
-}
-
-func hasKnownVisionCapableModel(e *ProviderEntry) bool {
-	if e == nil {
-		return false
-	}
-	model := strings.ToLower(strings.TrimSpace(e.Model))
-	if model == "" {
-		return false
-	}
-	knownVisionPrefixes := []string{
-		"claude-opus", "claude-sonnet", "claude-3", "claude-haiku",
-		"gpt-4-vision", "gpt-4-turbo", "gpt-4o",
-		"gemini-pro-vision", "gemini-1.5", "gemini-2.0",
-	}
-	for _, prefix := range knownVisionPrefixes {
-		if strings.HasPrefix(model, prefix) {
-			return true
-		}
-	}
-	return false
+	return isOfficialMimoVisionEntry(e)
 }
 
 // ExplicitModelVision reports whether the selected model has a positive,

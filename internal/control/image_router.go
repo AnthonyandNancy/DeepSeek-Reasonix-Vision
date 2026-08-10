@@ -46,24 +46,7 @@ func (c *Controller) injectVisualModelAssistanceWithTool(input string, firstPart
 }
 
 func (c *Controller) injectVisualModelAssistanceWithMainModelSupport(input string, firstPartyTool, mainModelSupportsVision bool) string {
-	if c == nil {
-		return input
-	}
-	if mainModelSupportsVision {
-		if c.visionModelRefOr() != "" || firstPartyTool {
-			block := `<main-model-vision-capability>
-The main model has native image input capability and can directly process attached images.
-For user-attached images in this turn, use the main model's built-in vision rather than calling external vision tools (analyze_image, ocr_image, analyze_media_with_vision).
-External vision tools are only needed when explicitly requested by the user or when the main model lacks vision capability.
-</main-model-vision-capability>`
-			if strings.TrimSpace(input) == "" {
-				return block
-			}
-			return block + "\n\n" + input
-		}
-		return input
-	}
-	if c.visionModelRefOr() == "" {
+	if c == nil || mainModelSupportsVision || c.visionModelRefOr() == "" {
 		return input
 	}
 	block := visualModelAssistanceBlock(c.visionModelRefOr(), firstPartyTool)
@@ -193,11 +176,7 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 			MediaCount: len(visionImages), Observe: recorder.Observe,
 		})
 		emitsProgress := vision.DescriberEmitsVisionProgress(c.visionDescriber)
-		maxAttempts := maxVisionAttemptsPerTurn
-		if state.mainModelSupportsVision && !state.RequireIndependentVision {
-			maxAttempts = 1
-		}
-		for state.VisionAttempts < maxAttempts {
+		for state.VisionAttempts < maxVisionAttemptsPerTurn {
 			state.VisionAttempts++
 			if !emitsProgress {
 				vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: event.VisionStagePreparing, ModelRef: status.ModelRef})
@@ -227,11 +206,8 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 			}
 		}
 		analysis := []provider.VisualAnalysisRecord{recorder.Snapshot(vision.Evidence{}, "")}
-		if ctx.Err() != nil || state.VisionAttempts >= maxAttempts {
+		if ctx.Err() != nil || state.VisionAttempts >= maxVisionAttemptsPerTurn {
 			state.Resolved = true
-			if state.mainModelSupportsVision && !state.RequireIndependentVision {
-				return ImageRouteResult{Mode: ImageRouteDirectMain, Input: input, Images: imageDataURLs(images), Notice: "visual evidence extraction failed; using the vision-capable main model", VisualAnalyses: analysis}
-			}
 			result := pathOnlyResult(input, images, fmt.Sprintf("visual evidence extraction failed after %d attempt(s)", state.VisionAttempts))
 			result.VisualAnalyses = analysis
 			return result

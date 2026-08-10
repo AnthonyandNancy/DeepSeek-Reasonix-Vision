@@ -51,6 +51,12 @@ func (c *Controller) routeResolvedMediaOnce(ctx context.Context, state *ImageRou
 		state.mainModelSupportsVision = c.mainModelSupportsVision()
 		state.mainModelVisionKnown = true
 	}
+	// A media-free turn stays silent about the visual bridge: pasted prose that
+	// describes an image is not media, and a standing analyze_media_with_vision
+	// line pushes the main model onto whichever visual tool still answers.
+	if len(media.Images) == 0 && !media.ReanalysisRequested {
+		return route
+	}
 	toolAvailable := c != nil && c.visionDescriber != nil && c.visionModelRefOr() != ""
 	advertiseTool := toolAvailable && route.Mode != ImageRouteVisionEvidence
 	if !state.mainModelSupportsVision {
