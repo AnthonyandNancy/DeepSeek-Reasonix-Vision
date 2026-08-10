@@ -97,8 +97,37 @@ func TestAgentToolImagesTextModelStoresVisualEvidenceNotRawImage(t *testing.T) {
 	}
 }
 
-func TestAgentToolImagesVisionModelStillUsesConfiguredVisualProcessor(t *testing.T) {
-	fp := &recordingToolImageProcessor{out: vision.ToolImageOutput{Text: "visual evidence", Success: true}}
+func TestAgentToolImagesVisionModelRetainsRawToolImage(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(&fakeImageTool{text: "shot", images: []string{bridgeShotDataURL}})
+	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
+		{toolCallChunk("c1", "shot", `{}`), {Type: provider.ChunkDone}},
+		{{Type: provider.ChunkText, Text: "done"}, {Type: provider.ChunkDone}},
+	}}
+	sess := NewSession("sys")
+	a := New(prov, reg, sess, Options{
+		ToolImages:          vision.NewToolImageProcessor("p/vision", nil, event.Discard),
+		ModelSupportsImages: true,
+	}, event.Discard)
+	if err := a.Run(context.Background(), "look"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if img := bridgeToolMessageImages(sess, "shot"); len(img) != 1 || img[0] != bridgeShotDataURL {
+		t.Fatalf("vision model tool images = %v, want raw tool image", img)
+	}
+	if img := bridgeToolMessageLocalImages(sess, "shot"); len(img) != 0 {
+		t.Fatalf("vision model local tool images = %v, want none", img)
+	}
+	if analyses := bridgeToolMessageVisualAnalyses(sess, "shot"); len(analyses) != 0 {
+		t.Fatalf("vision model visual analyses = %+v, want none", analyses)
+	}
+	if content := lastToolResult(sess, "shot"); content != "shot" {
+		t.Fatalf("tool message content = %q, want original tool text", content)
+	}
+}
+
+func TestAgentToolImagesForwardsVisionCapabilityToGenericProcessor(t *testing.T) {
+	fp := &recordingToolImageProcessor{out: vision.ToolImageOutput{Text: "processed"}}
 	reg := tool.NewRegistry()
 	reg.Add(&fakeImageTool{text: "shot", images: []string{bridgeShotDataURL}})
 	prov := &scriptedProvider{name: "p", turns: [][]provider.Chunk{
@@ -110,17 +139,8 @@ func TestAgentToolImagesVisionModelStillUsesConfiguredVisualProcessor(t *testing
 	if err := a.Run(context.Background(), "look"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if img := bridgeToolMessageImages(sess, "shot"); len(img) != 0 {
-		t.Fatalf("vision model tool images = %v, want visual evidence without raw image", img)
-	}
-	if img := bridgeToolMessageLocalImages(sess, "shot"); len(img) != 1 || img[0] != bridgeShotDataURL {
-		t.Fatalf("vision model local tool images = %v, want recoverable original image", img)
-	}
 	if in := fp.inputs(); len(in) != 1 || !in[0].ModelSupportsImages {
 		t.Fatalf("processor input = %+v, want configured processor to receive image-capable=true", in)
-	}
-	if content := lastToolResult(sess, "shot"); content != "visual evidence" {
-		t.Fatalf("tool message content = %q, want visual evidence", content)
 	}
 }
 

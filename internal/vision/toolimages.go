@@ -53,6 +53,9 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 	if len(in.Images) == 0 {
 		return ToolImageOutput{Text: in.ToolText, Images: in.Images}
 	}
+	if in.ModelSupportsImages {
+		return ToolImageOutput{Text: in.ToolText, Images: in.Images}
+	}
 	toolName := strings.TrimSpace(in.ToolName)
 	if toolName == "" {
 		toolName = "unknown"

@@ -50,10 +50,14 @@ func smallEvidence() Evidence {
 
 func TestToolImageProcessorUsesConfiguredVisionModelForVisionCapableMain(t *testing.T) {
 	d := &fakeEvidenceDescriber{evidence: smallEvidence()}
-	p := NewToolImageProcessor("p/vision", d, nil)
+	events := make([]event.Event, 0)
+	p := NewToolImageProcessor("p/vision", d, event.FuncSink(func(e event.Event) { events = append(events, e) }))
 	out := p.ProcessToolImages(context.Background(), ToolImageInput{ToolName: "read_file", ToolText: "ok", Images: []string{"data:image/png;base64,AA=="}, ModelSupportsImages: true})
-	if d.calls != 1 || len(out.Images) != 0 || !out.Success || !strings.Contains(out.Text, `schema="modlens-v2"`) {
+	if d.calls != 0 || len(out.Images) != 1 || out.Text != "ok" || len(out.VisualAnalyses) != 0 {
 		t.Fatalf("out=%+v calls=%d", out, d.calls)
+	}
+	if len(events) != 0 {
+		t.Fatalf("vision progress events = %+v, want none", events)
 	}
 }
 
