@@ -1246,7 +1246,10 @@ type AgentConfig struct {
 	// used as a visual evidence bridge when the active model cannot accept
 	// images directly. The bridge is tool-less and its output is validated
 	// against the ModLens v2 evidence contract before it reaches the main model.
-	VisionModel      string            `toml:"vision_model"`
+	VisionModel string `toml:"vision_model"`
+	// VisionPreview lets the host read an attached image for a gist. Nil means
+	// on: without one the model cannot judge whether looking is worth a call.
+	VisionPreview    *bool             `toml:"vision_preview"`
 	SubagentModel    string            `toml:"subagent_model"`
 	SubagentModels   map[string]string `toml:"subagent_models"`
 	SubagentEffort   string            `toml:"subagent_effort"`

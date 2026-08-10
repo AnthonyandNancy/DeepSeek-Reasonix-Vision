@@ -203,3 +203,61 @@ func anyStrings(value any) []string {
 	}
 	return out
 }
+
+// A stored reading is free; refresh and a focused instruction are not, because
+// both ask for something the stored record cannot answer.
+func TestAnalyzeMediaServesStoredReadingUnlessAskedOtherwise(t *testing.T) {
+	images := []Image{{Ref: "shot.png", Path: ".reasonix/attachments/shot.png", DataURL: "data:image/png;base64,AA=="}}
+	resolve := func(context.Context, MediaSelection) ([]Image, []string, error) {
+		return images, []string{".reasonix/attachments/shot.png"}, nil
+	}
+	lookup := func(ref string) (string, bool) {
+		if EvidenceKey(ref) == EvidenceKey(".reasonix/attachments/shot.png") {
+			return "<visual-evidence>stored</visual-evidence>", true
+		}
+		return "", false
+	}
+	for name, args := range map[string]string{
+		"default":  `{}`,
+		"by index": `{"image_index":1}`,
+		"explicit": `{"selection":"latest"}`,
+	} {
+		d := &analyzeToolDescriber{evidence: analyzeToolEvidence()}
+		tl := NewAnalyzeMediaToolWithStore("vision/vl", d, resolve, nil, lookup)
+		out, err := tl.Execute(context.Background(), json.RawMessage(args))
+		if err != nil || out != "<visual-evidence>stored</visual-evidence>" {
+			t.Fatalf("[%s] out=%q err=%v, want the stored reading", name, out, err)
+		}
+		if d.calls != 0 {
+			t.Fatalf("[%s] stored reading still paid for the visual model", name)
+		}
+	}
+	for name, args := range map[string]string{
+		"refresh":     `{"refresh":true}`,
+		"instruction": `{"instruction":"what is in the lower right corner"}`,
+	} {
+		d := &analyzeToolDescriber{evidence: analyzeToolEvidence()}
+		tl := NewAnalyzeMediaToolWithStore("vision/vl", d, resolve, nil, lookup)
+		if _, err := tl.Execute(context.Background(), json.RawMessage(args)); err != nil {
+			t.Fatalf("[%s] Execute: %v", name, err)
+		}
+		if d.calls != 1 {
+			t.Fatalf("[%s] visual model calls = %d, want a fresh reading", name, d.calls)
+		}
+	}
+}
+
+// The focus must reach the extractor, or a targeted question degrades into
+// another generic reading.
+func TestFocusReachesTheExtractor(t *testing.T) {
+	prompt := buildVisionUserPrompt("what is in the lower right corner", []Image{{Ref: "a.png"}})
+	if !strings.Contains(prompt, "what is in the lower right corner") {
+		t.Fatalf("focus missing from prompt: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Lead the summary with what you directly observe") {
+		t.Fatalf("prompt did not ask the extractor to lead with the focus: %q", prompt)
+	}
+	if strings.Contains(prompt, "do not answer it") {
+		t.Fatalf("prompt still suppresses focused observation: %q", prompt)
+	}
+}

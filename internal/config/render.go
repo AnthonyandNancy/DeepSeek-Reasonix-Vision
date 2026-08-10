@@ -257,6 +257,9 @@ func RenderTOMLForScope(c *Config, scope RenderScope) string {
 	} else {
 		b.WriteString("# vision_model = \"provider/vision-model\"   # optional: extract ModLens v2 visual evidence when the main model has no image input\n")
 	}
+	if c.Agent.VisionPreview != nil {
+		fmt.Fprintf(&b, "vision_preview = %t   # host reads attachments for a gist; false leaves every visual call to the model\n", *c.Agent.VisionPreview)
+	}
 	if c.Agent.SubagentModel != "" {
 		fmt.Fprintf(&b, "subagent_model = %q   # default model for runAs=subagent skills\n", c.Agent.SubagentModel)
 	} else {

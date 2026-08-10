@@ -239,7 +239,7 @@ func buildVisionUserPrompt(question string, images []Image) string {
 	var b strings.Builder
 	b.WriteString("Extract visual evidence from the attached image(s).\n")
 	if q := strings.TrimSpace(question); q != "" {
-		b.WriteString("User focus (use only to prioritize relevant evidence; do not answer it):\n")
+		b.WriteString("Focus. Lead the summary with what you directly observe about it, and put whatever you cannot make out into uncertainty. Extract evidence; do not solve the task:\n")
 		b.WriteString(q)
 		b.WriteString("\n")
 	}

@@ -24,6 +24,12 @@ The host owns ordinary media analysis for this turn; do not infer pixels from a 
 This is the current analysis for the attached image(s); request another visual reading only when this evidence is insufficient for the task.
 </direct-visual-input-status>`
 
+const deferredUserImageMedia = `<direct-visual-input-status>
+The user attached image(s) in this turn. The host did not read them because visual preview is off in this workspace.
+analyze_media_with_vision reads conversation media when you need the pixels; any configured visual tool may serve instead.
+Do not infer pixels from a filename, path, or metadata, and do not claim to have seen the image content.
+</direct-visual-input-status>`
+
 func visualModelAssistanceBlock(modelRef string, firstPartyTool bool) string {
 	toolGuidance := ""
 	if firstPartyTool {
@@ -63,6 +69,9 @@ const (
 	ImageRouteDirectMain
 	ImageRouteVisionEvidence
 	ImageRoutePathOnly
+	// ImageRouteDeferred means the media is readable but nobody read it: the
+	// workspace turned preview off, so the decision to look belongs to the model.
+	ImageRouteDeferred
 )
 
 type ImageRouteResult struct {
@@ -96,6 +105,20 @@ type VisionModelStatus struct {
 
 func (c *Controller) mainModelSupportsVision() bool { return c != nil && c.imageInputEnabled() }
 func (c *Controller) visionModelRefOr() string      { return strings.TrimSpace(c.visionModelRef) }
+
+// visionPreviewEnabled reports whether the host may read an attached image on
+// its own. Default on: without a gist the model knows an image exists but
+// nothing about it, and cannot judge whether looking is worth a tool call.
+func (c *Controller) visionPreviewEnabled() bool {
+	if c == nil {
+		return false
+	}
+	cfg, err := config.LoadForRoot(c.workspaceRoot)
+	if err != nil || cfg.Agent.VisionPreview == nil {
+		return true
+	}
+	return *cfg.Agent.VisionPreview
+}
 
 // StoredVisualEvidence returns the full rendering the host already produced for
 // a media ref. Turns carry only a digest, so this is how detail comes back
@@ -188,6 +211,11 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 	}
 	status := c.resolveVisionModelStatus()
 	if status.Kind == VisionModelSupported && c.visionDescriber != nil {
+		if !c.visionPreviewEnabled() {
+			state.Resolved = true
+			cleaned := stripResolvedUserImageContext(input, images)
+			return ImageRouteResult{Mode: ImageRouteDeferred, Input: strings.TrimSpace(cleaned + "\n\n" + deferredUserImageMedia)}
+		}
 		visionImages := toVisionImages(images)
 		analysisID := vision.NewAnalysisID()
 		recorder := vision.NewAnalysisRecorder(

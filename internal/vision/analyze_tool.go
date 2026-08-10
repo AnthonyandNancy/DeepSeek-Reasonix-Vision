@@ -63,7 +63,7 @@ func (t *analyzeMediaTool) storedEvidence(images []Image) (string, bool) {
 func (*analyzeMediaTool) Name() string { return analyzeMediaToolName }
 
 func (*analyzeMediaTool) Description() string {
-	return "Analyze image media already stored in the current conversation with the application's independent visual model. Use this for a fresh reading of historical conversation media. Select the latest image by default, all images, or one one-based image index. This tool does not accept filesystem paths."
+	return "Analyze image media already stored in the current conversation with the application's independent visual model. Returns the stored reading when the host already analyzed the image; pass instruction to focus a new reading on one detail, or refresh=true to re-run the visual model from scratch. Select the latest image by default, all images, or one one-based image index. This tool does not accept filesystem paths."
 }
 
 func (*analyzeMediaTool) Schema() json.RawMessage {
@@ -72,7 +72,8 @@ func (*analyzeMediaTool) Schema() json.RawMessage {
   "properties":{
     "selection":{"type":"string","enum":["latest","all"],"description":"Which conversation media to analyze. Defaults to latest."},
     "image_index":{"type":"integer","minimum":1,"description":"One-based image index across conversation media. Mutually exclusive with selection=all."},
-    "instruction":{"type":"string","description":"Optional focus for the visual evidence extraction; it is not treated as image content."}
+    "instruction":{"type":"string","description":"Optional focus for the visual evidence extraction; it is not treated as image content."},
+    "refresh":{"type":"boolean","description":"Re-run the visual model instead of returning the stored reading. Use when the user asks for a fresh analysis."}
   },
   "additionalProperties":false
 }`)
@@ -86,7 +87,7 @@ func (t *analyzeMediaTool) Execute(ctx context.Context, args json.RawMessage) (s
 }
 
 func (t *analyzeMediaTool) ExecuteWithTranscriptMetadata(ctx context.Context, args json.RawMessage) (tool.TranscriptMetadataResult, error) {
-	selection, instruction, err := parseAnalyzeMediaArgs(args)
+	selection, instruction, refresh, err := parseAnalyzeMediaArgs(args)
 	if err != nil {
 		return tool.TranscriptMetadataResult{}, err
 	}
@@ -105,9 +106,9 @@ func (t *analyzeMediaTool) ExecuteWithTranscriptMetadata(ctx context.Context, ar
 	}
 
 	// A stored reading answers "what else was in that image" for free. An
-	// instruction asks something the stored record was not written for, so it
-	// always goes to the model.
-	if instruction == "" {
+	// instruction asks something the stored record was not written for, and
+	// refresh means the user was unsatisfied with it — both go to the model.
+	if instruction == "" && !refresh {
 		if evidence, ok := t.storedEvidence(images); ok {
 			return tool.TranscriptMetadataResult{Output: evidence}, nil
 		}
@@ -162,9 +163,10 @@ type analyzeMediaArgs struct {
 	Selection   string `json:"selection"`
 	ImageIndex  *int   `json:"image_index"`
 	Instruction string `json:"instruction"`
+	Refresh     bool   `json:"refresh"`
 }
 
-func parseAnalyzeMediaArgs(raw json.RawMessage) (MediaSelection, string, error) {
+func parseAnalyzeMediaArgs(raw json.RawMessage) (MediaSelection, string, bool, error) {
 	var args analyzeMediaArgs
 	if len(strings.TrimSpace(string(raw))) == 0 {
 		raw = json.RawMessage(`{}`)
@@ -172,27 +174,27 @@ func parseAnalyzeMediaArgs(raw json.RawMessage) (MediaSelection, string, error) 
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&args); err != nil {
-		return MediaSelection{}, "", fmt.Errorf("analyze_media_with_vision: invalid arguments: %w", err)
+		return MediaSelection{}, "", false, fmt.Errorf("analyze_media_with_vision: invalid arguments: %w", err)
 	}
 	selection := strings.ToLower(strings.TrimSpace(args.Selection))
 	if selection == "" {
 		selection = "latest"
 	}
 	if selection != "latest" && selection != "all" {
-		return MediaSelection{}, "", fmt.Errorf("analyze_media_with_vision: selection must be latest or all")
+		return MediaSelection{}, "", false, fmt.Errorf("analyze_media_with_vision: selection must be latest or all")
 	}
 	if selection == "all" && args.ImageIndex != nil {
-		return MediaSelection{}, "", errors.New("analyze_media_with_vision: selection=all and image_index are mutually exclusive")
+		return MediaSelection{}, "", false, errors.New("analyze_media_with_vision: selection=all and image_index are mutually exclusive")
 	}
 	out := MediaSelection{All: selection == "all", Index: -1}
 	if args.ImageIndex != nil {
 		if *args.ImageIndex < 1 {
-			return MediaSelection{}, "", errors.New("analyze_media_with_vision: image_index must be one or greater")
+			return MediaSelection{}, "", false, errors.New("analyze_media_with_vision: image_index must be one or greater")
 		}
 		out.All = false
 		out.Index = *args.ImageIndex - 1
 	}
-	return out, truncateAnalysisText(strings.TrimSpace(args.Instruction), maxAnalyzeInstructionBytes), nil
+	return out, truncateAnalysisText(strings.TrimSpace(args.Instruction), maxAnalyzeInstructionBytes), args.Refresh, nil
 }
 
 func revalidateEvidence(evidence Evidence) (Evidence, error) {
