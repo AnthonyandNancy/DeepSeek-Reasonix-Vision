@@ -684,6 +684,64 @@ func TestMultiImageEvidenceOmitsIndexButKeepsRefs(t *testing.T) {
 	}
 }
 
+// The turn carries the gist, not the whole ModLens record. A screenshot's OCR
+// and layout run to kilobytes that mostly go unread, and a few images would
+// crowd out the rest of the conversation.
+func TestUserImageTurnCarriesDigestNotFullEvidence(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	c := New(Options{
+		WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "看这张 @shot.png", "看这张", MediaTurnResolution{
+		Images: []ResolvedImage{{Ref: ".reasonix/attachments/shot.png", Path: ".reasonix/attachments/shot.png", DataURL: "data:image/png;base64," + tinyPNG}},
+	})
+	if !strings.Contains(route.Input, "modlens-v2-digest") {
+		t.Fatalf("turn did not carry a digest:\n%s", route.Input)
+	}
+	if strings.Contains(route.Input, "OCR full text:") || strings.Contains(route.Input, "LAYOUT[") {
+		t.Fatalf("full ModLens record leaked into the turn:\n%s", route.Input)
+	}
+	if !strings.Contains(route.Input, "analyze_media_with_vision returns them") {
+		t.Fatalf("digest did not tell the model how to get detail:\n%s", route.Input)
+	}
+	// The UI card must still show everything the model's eyes saw.
+	if len(route.VisualAnalyses) != 1 || !strings.Contains(route.VisualAnalyses[0].Evidence, "OCR[1]") {
+		t.Fatalf("transcript record lost the full evidence: %+v", route.VisualAnalyses)
+	}
+}
+
+// Detail the digest omitted must be retrievable without paying for the visual
+// model twice. The full rendering rides the transcript record, so it also
+// survives a session reload.
+func TestHostAnalysisIsRetrievableFromEvidenceStore(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	sess := agent.NewSession("system")
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{
+		Executor: exec, WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "看这张", "看这张", MediaTurnResolution{
+		Images: []ResolvedImage{{Ref: ".reasonix/attachments/shot.png", Path: ".reasonix/attachments/shot.png", DataURL: "data:image/png;base64," + tinyPNG}},
+	})
+	sess.Add(provider.Message{Role: provider.RoleUser, Content: route.Input, VisualAnalyses: route.VisualAnalyses})
+
+	evidence, ok := c.StoredVisualEvidence(".reasonix/attachments/shot.png")
+	if !ok || !strings.Contains(evidence, "OCR[1]") {
+		t.Fatalf("full evidence was not retrievable: ok=%v evidence=%q", ok, evidence)
+	}
+	// The "@" form and separator drift must reach the same record.
+	if _, ok := c.StoredVisualEvidence("@.reasonix\\attachments\\shot.png"); !ok {
+		t.Fatalf("evidence key did not normalize prefix/separators")
+	}
+	if _, ok := c.StoredVisualEvidence(".reasonix/attachments/other.png"); ok {
+		t.Fatalf("lookup matched an unrelated media ref")
+	}
+}
+
 type imageRouteTestTool struct{}
 
 func (imageRouteTestTool) Name() string                                             { return "mcp__vision__analyze_image" }

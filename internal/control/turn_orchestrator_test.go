@@ -1296,7 +1296,7 @@ func TestTurnOrchestratorInjectsModLensEvidenceNotRawImages(t *testing.T) {
 	if len(runner.inputs) != 1 {
 		t.Fatalf("main model calls = %d, want 1", len(runner.inputs))
 	}
-	for _, want := range []string{`<visual-evidence schema="modlens-v2"`, "DIRECT_EVIDENCE", "SEMANTIC_INTERPRETATION", "UNCERTAINTY", "root cause not visible"} {
+	for _, want := range []string{`<visual-evidence schema="modlens-v2-digest"`, "SUMMARY", "UNCERTAINTY", "root cause not visible"} {
 		if !strings.Contains(runner.inputs[0], want) {
 			t.Fatalf("main model input missing %q: %q", want, runner.inputs[0])
 		}

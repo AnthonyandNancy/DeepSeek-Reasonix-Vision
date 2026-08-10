@@ -105,10 +105,15 @@ func TestRouteImagesUsesModLensEvidenceForTextMainModel(t *testing.T) {
 	if res.Mode != ImageRouteVisionEvidence || d.calls != 1 || len(res.Images) != 0 {
 		t.Fatalf("res=%+v calls=%d", res, d.calls)
 	}
-	for _, want := range []string{"schema=\"modlens-v2\"", "DIRECT_EVIDENCE", "UNCERTAINTY", "Never convert uncertainty into fact"} {
+	// The turn receives the gist under the same trusted wrapper; DIRECT_EVIDENCE
+	// stays in the parked record rather than the model's context.
+	for _, want := range []string{"schema=\"modlens-v2-digest\"", "SUMMARY", "UNCERTAINTY", "never convert uncertainty into fact"} {
 		if !strings.Contains(res.Input, want) {
 			t.Fatalf("missing %q: %s", want, res.Input)
 		}
+	}
+	if strings.Contains(res.Input, "DIRECT_EVIDENCE") {
+		t.Fatalf("full ModLens record leaked into the turn: %s", res.Input)
 	}
 	if len(res.VisualAnalyses) != 1 {
 		t.Fatalf("visual analyses = %+v, want one durable record", res.VisualAnalyses)

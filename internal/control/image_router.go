@@ -97,6 +97,30 @@ type VisionModelStatus struct {
 func (c *Controller) mainModelSupportsVision() bool { return c != nil && c.imageInputEnabled() }
 func (c *Controller) visionModelRefOr() string      { return strings.TrimSpace(c.visionModelRef) }
 
+// StoredVisualEvidence returns the full rendering the host already produced for
+// a media ref. Turns carry only a digest, so this is how detail comes back
+// without paying for the visual model again. Newest record wins.
+func (c *Controller) StoredVisualEvidence(ref string) (string, bool) {
+	key := vision.EvidenceKey(ref)
+	if c == nil || key == "" {
+		return "", false
+	}
+	history := c.History()
+	for i := len(history) - 1; i >= 0; i-- {
+		for _, record := range history[i].VisualAnalyses {
+			if strings.TrimSpace(record.Evidence) == "" {
+				continue
+			}
+			for _, mediaRef := range record.MediaRefs {
+				if vision.EvidenceKey(mediaRef) == key {
+					return record.Evidence, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
 // VisionModelRef returns the provider/model reference for visual evidence.
 func (c *Controller) VisionModelRef() string { return c.visionModelRef }
 
@@ -188,11 +212,14 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 					vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: event.VisionStageReady, ModelRef: status.ModelRef})
 				}
 				state.Resolved = true
-				evidence := vision.RenderEvidenceContextWithin(ev, "user-attachment", mediaID, maxUserVisionEvidenceBytes)
-				final := joinVisualEvidenceInput(stripResolvedUserImageContext(input, images), evidence)
+				// The turn carries the gist; the transcript record keeps the full
+				// rendering so the UI card and later retrieval both stay complete.
+				digest := vision.RenderEvidenceDigest(ev, "user-attachment", mediaID)
+				full := vision.RenderEvidenceContextWithin(ev, "user-attachment", mediaID, maxUserVisionEvidenceBytes)
+				final := joinVisualEvidenceInput(stripResolvedUserImageContext(input, images), digest)
 				return ImageRouteResult{
 					Mode: ImageRouteVisionEvidence, Input: final, Images: nil, VisionUsage: usage,
-					VisualAnalyses: []provider.VisualAnalysisRecord{recorder.Snapshot(ev, evidence)},
+					VisualAnalyses: []provider.VisualAnalysisRecord{recorder.Snapshot(ev, full)},
 				}
 			}
 			if !emitsProgress {

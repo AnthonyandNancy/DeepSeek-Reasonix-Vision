@@ -31,10 +31,33 @@ type analyzeMediaTool struct {
 	describer Describer
 	resolve   MediaResolver
 	ownerID   InvocationIDResolver
+	stored    StoredEvidenceLookup
 }
+
+// StoredEvidenceLookup returns the full rendering the host already produced for
+// a media ref, if any.
+type StoredEvidenceLookup func(ref string) (string, bool)
 
 func NewAnalyzeMediaTool(modelRef string, describer Describer, resolve MediaResolver, ownerID InvocationIDResolver) tool.Tool {
 	return &analyzeMediaTool{modelRef: strings.TrimSpace(modelRef), describer: describer, resolve: resolve, ownerID: ownerID}
+}
+
+// NewAnalyzeMediaToolWithStore serves the stored reading when the host already
+// analysed the image, so recovering detail the digest omitted costs no second
+// call to the visual model.
+func NewAnalyzeMediaToolWithStore(modelRef string, describer Describer, resolve MediaResolver, ownerID InvocationIDResolver, stored StoredEvidenceLookup) tool.Tool {
+	return &analyzeMediaTool{modelRef: strings.TrimSpace(modelRef), describer: describer, resolve: resolve, ownerID: ownerID, stored: stored}
+}
+
+func (t *analyzeMediaTool) storedEvidence(images []Image) (string, bool) {
+	if t == nil || t.stored == nil || len(images) != 1 {
+		return "", false
+	}
+	ref := StoreRef(images[0])
+	if ref == "" {
+		return "", false
+	}
+	return t.stored(ref)
 }
 
 func (*analyzeMediaTool) Name() string { return analyzeMediaToolName }
@@ -79,6 +102,15 @@ func (t *analyzeMediaTool) ExecuteWithTranscriptMetadata(ctx context.Context, ar
 	}
 	if len(refs) == 0 {
 		refs = imageRefs(images)
+	}
+
+	// A stored reading answers "what else was in that image" for free. An
+	// instruction asks something the stored record was not written for, so it
+	// always goes to the model.
+	if instruction == "" {
+		if evidence, ok := t.storedEvidence(images); ok {
+			return tool.TranscriptMetadataResult{Output: evidence}, nil
+		}
 	}
 
 	analysisID := NewAnalysisID()
