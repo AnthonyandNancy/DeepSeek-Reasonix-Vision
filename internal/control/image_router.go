@@ -21,7 +21,7 @@ const directUserImageEvidenceReady = `<direct-visual-input-status>
 The attached user image(s) were already analyzed by the configured independent visual model.
 Use the ModLens v2 evidence below as visual context for this turn.
 The host owns ordinary media analysis for this turn; do not infer pixels from a filename, path, or metadata.
-This is the fresh analysis for the attached image(s); do not call analyze_media_with_vision for the attached image(s) in this turn.
+This is the current analysis for the attached image(s); request another visual reading only when this evidence is insufficient for the task.
 </direct-visual-input-status>`
 
 func visualModelAssistanceBlock(modelRef string, firstPartyTool bool) string {

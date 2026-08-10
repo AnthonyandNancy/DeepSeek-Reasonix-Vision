@@ -429,6 +429,9 @@ func TestVisualEvidenceGuidanceUsesIndependentModelAsDefaultWithoutToolPolicy(t 
 	}
 }
 
+// The host states what it already did; it never forbids a visual tool. The
+// evidence block must not invite a redundant historical re-read, but the main
+// model stays free to request another reading when the evidence falls short.
 func TestFreshUserImageEvidenceDoesNotInviteDuplicateFirstPartyAnalysis(t *testing.T) {
 	workspace := t.TempDir()
 	writeImageRouteConfig(t, workspace)
@@ -445,8 +448,11 @@ func TestFreshUserImageEvidenceDoesNotInviteDuplicateFirstPartyAnalysis(t *testi
 	if strings.Contains(route.Input, "For a fresh analysis of media already stored in the conversation") {
 		t.Fatalf("fresh attachment guidance invited a duplicate historical analysis:\n%s", route.Input)
 	}
-	if !strings.Contains(route.Input, "do not call analyze_media_with_vision for the attached image(s) in this turn") {
-		t.Fatalf("fresh attachment guidance did not close the same-turn duplicate path:\n%s", route.Input)
+	if !strings.Contains(route.Input, "request another visual reading only when this evidence is insufficient") {
+		t.Fatalf("fresh attachment guidance lost its sufficiency statement:\n%s", route.Input)
+	}
+	if strings.Contains(route.Input, "do not call") || strings.Contains(route.Input, "must call") {
+		t.Fatalf("host guidance gate-kept a visual tool:\n%s", route.Input)
 	}
 }
 

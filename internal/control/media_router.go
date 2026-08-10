@@ -28,7 +28,7 @@ Do not claim that a fresh analysis was performed; explain that fresh pixel analy
 	if toolAvailable {
 		block = `<visual-reanalysis-request>
 The user requested a fresh analysis of media already stored in this conversation.
-The main model must call analyze_media_with_vision before answering; the tool selects conversation-owned media and returns ModLens v2 evidence.
+analyze_media_with_vision reads conversation-owned media and returns ModLens v2 evidence; any configured visual tool may serve this request.
 Do not infer pixels from a filename or path, and do not present older evidence as a fresh analysis.
 </visual-reanalysis-request>`
 	}
