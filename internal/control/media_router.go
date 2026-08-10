@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -104,6 +105,38 @@ func (c *Controller) ResolveHistoricalVisionMedia(_ context.Context, selection v
 		}
 	}
 	return images, refs, nil
+}
+
+// conversationMediaIndexBase counts media already in the conversation, so a new
+// analysis can be labelled with the same one-based numbering
+// analyze_media_with_vision's image_index takes. Flatten-then-dedupe mirrors
+// selectHistoricalVisionMedia exactly; any drift would misaddress images.
+func (c *Controller) conversationMediaIndexBase() int {
+	var all []ResolvedImage
+	for _, group := range c.safeHistoricalMediaGroups() {
+		all = append(all, group...)
+	}
+	return len(dedupeResolvedImages(all))
+}
+
+// evidenceMediaID labels one analysis. A batch covering several images gets no
+// index — a single block cannot stand for several positions — so it carries the
+// joined refs instead. The "@" prefix is stripped: a live ref token inside the
+// evidence would invite the model to re-reference an image the host consumed.
+func evidenceMediaID(base int, images []ResolvedImage) vision.MediaID {
+	refs := mediaRefsForResolvedImages(images)
+	names := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		names = append(names, mediaDisplayName(ref))
+	}
+	if len(images) == 1 {
+		return vision.MediaID{Index: base + 1, Ref: strings.Join(names, "")}
+	}
+	return vision.MediaID{Ref: strings.Join(names, ", ")}
+}
+
+func mediaDisplayName(ref string) string {
+	return path.Base(filepath.ToSlash(strings.TrimPrefix(strings.TrimSpace(ref), "@")))
 }
 
 func (c *Controller) safeHistoricalMediaGroups() [][]ResolvedImage {

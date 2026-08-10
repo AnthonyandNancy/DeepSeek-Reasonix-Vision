@@ -94,7 +94,7 @@ func (p *ProviderToolImageProcessor) ProcessToolImages(ctx context.Context, in T
 		}
 		ev, _, err := p.describer.DescribeToolImagesOnce(analysisCtx, p.modelRef, ToolImageDescribeInput{ToolName: toolName, ToolText: truncateToolContext(in.ToolText, maxToolContextBytes), TaskContext: truncateToolContext(in.TaskContext, maxToolContextBytes), Images: imgs})
 		if err == nil {
-			evidence := RenderEvidenceContextWithin(ev, "tool:"+toolName, maxToolEvidenceBytes)
+			evidence := RenderEvidenceContextWithin(ev, "tool:"+toolName, MediaID{}, maxToolEvidenceBytes)
 			final := appendBoundedToolBlock(in.ToolText, "\n\n", evidence, "\n", maxText)
 			p.emitProgress(analysisCtx, event.VisionStageReady, "")
 			return ToolImageOutput{

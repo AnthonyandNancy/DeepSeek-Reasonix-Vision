@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"reasonix/internal/event"
@@ -117,7 +119,7 @@ func (t *analyzeMediaTool) ExecuteWithTranscriptMetadata(ctx context.Context, ar
 	if !emitsProgress {
 		EmitProgress(analysisCtx, nil, event.VisionProgressInfo{Stage: event.VisionStageReady, ModelRef: t.modelRef})
 	}
-	rendered := RenderEvidenceContextWithin(validated, "conversation-media", maxAnalyzeEvidenceBytes)
+	rendered := RenderEvidenceContextWithin(validated, "conversation-media", analyzeMediaID(selection, refs), maxAnalyzeEvidenceBytes)
 	return tool.TranscriptMetadataResult{
 		Output:         rendered,
 		VisualAnalyses: []provider.VisualAnalysisRecord{recorder.Snapshot(validated, rendered)},
@@ -167,6 +169,22 @@ func revalidateEvidence(evidence Evidence) (Evidence, error) {
 		return Evidence{}, err
 	}
 	return ParseEvidence(string(raw))
+}
+
+// analyzeMediaID labels the tool's evidence so a later turn can name the image
+// it describes. Only an explicit image_index yields a position: latest and all
+// resolve to media the tool cannot number without re-walking the conversation,
+// and a wrong number is worse than none.
+func analyzeMediaID(selection MediaSelection, refs []string) MediaID {
+	names := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		names = append(names, path.Base(filepath.ToSlash(strings.TrimPrefix(strings.TrimSpace(ref), "@"))))
+	}
+	id := MediaID{Ref: strings.Join(names, ", ")}
+	if selection.Index >= 0 && len(refs) == 1 {
+		id.Index = selection.Index + 1
+	}
+	return id
 }
 
 func imageRefs(images []Image) []string {

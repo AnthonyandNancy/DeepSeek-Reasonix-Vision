@@ -77,7 +77,7 @@ func TestRenderEvidenceContextKeepsUncertaintyAndNeutralizesBoundary(t *testing.
 		Semantics:   Semantics{Scene: "web page", Entities: []SemanticEntity{}, Relations: []SemanticRelation{}},
 		Uncertainty: []string{"cannot infer implementation details"},
 	}
-	out := RenderEvidenceContext(e, "user-attachment")
+	out := RenderEvidenceContext(e, "user-attachment", MediaID{})
 	if strings.Count(out, "</visual-evidence>") != 1 {
 		t.Fatalf("wrapper escaped: %s", out)
 	}
@@ -94,7 +94,7 @@ func TestRenderEvidenceContextKeepsUncertaintyAndNeutralizesBoundary(t *testing.
 
 func TestRenderEvidenceContextWithinPreservesClosingBoundary(t *testing.T) {
 	e := Evidence{Summary: strings.Repeat("x", 5000), OCR: OCR{Lines: []OCRLine{}}, Layout: Layout{Regions: []LayoutRegion{}}, Semantics: Semantics{Scene: "page", Entities: []SemanticEntity{}, Relations: []SemanticRelation{}}, Uncertainty: []string{}}
-	out := RenderEvidenceContextWithin(e, "tool:browser", 1200)
+	out := RenderEvidenceContextWithin(e, "tool:browser", MediaID{}, 1200)
 	if len(out) > 1200 {
 		t.Fatalf("len=%d", len(out))
 	}
@@ -114,7 +114,7 @@ func TestRenderEvidenceTreatsSummaryAsInterpretationNotDirectEvidence(t *testing
 		Semantics:   Semantics{Scene: "web UI", Entities: []SemanticEntity{}, Relations: []SemanticRelation{}},
 		Uncertainty: []string{},
 	}
-	out := RenderEvidenceContext(e, "user-attachment")
+	out := RenderEvidenceContext(e, "user-attachment", MediaID{})
 	direct := strings.Index(out, "DIRECT_EVIDENCE:")
 	semantic := strings.Index(out, "SEMANTIC_INTERPRETATION:")
 	summary := strings.Index(out, "summary: probably an admin dashboard")
@@ -132,7 +132,7 @@ func TestRenderEvidencePreservesModLensV2VisualFields(t *testing.T) {
 		Visual:      &Visual{DominantColors: []string{"white", "blue"}, Style: "flat admin UI", Notes: []string{"modal overlaps content"}},
 		Uncertainty: []string{},
 	}
-	out := RenderEvidenceContext(e, "user-attachment")
+	out := RenderEvidenceContext(e, "user-attachment", MediaID{})
 	if !strings.Contains(out, "dominant_colors: white, blue") {
 		t.Fatalf("dominant colors dropped from evidence context:\n%s", out)
 	}

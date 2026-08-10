@@ -176,6 +176,7 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 			MediaCount: len(visionImages), Observe: recorder.Observe,
 		})
 		emitsProgress := vision.DescriberEmitsVisionProgress(c.visionDescriber)
+		mediaID := evidenceMediaID(c.conversationMediaIndexBase(), images)
 		for state.VisionAttempts < maxVisionAttemptsPerTurn {
 			state.VisionAttempts++
 			if !emitsProgress {
@@ -187,7 +188,7 @@ func (c *Controller) routeImagesOnce(ctx context.Context, state *ImageRouteState
 					vision.EmitProgress(analysisCtx, c.sink, event.VisionProgressInfo{Stage: event.VisionStageReady, ModelRef: status.ModelRef})
 				}
 				state.Resolved = true
-				evidence := vision.RenderEvidenceContextWithin(ev, "user-attachment", maxUserVisionEvidenceBytes)
+				evidence := vision.RenderEvidenceContextWithin(ev, "user-attachment", mediaID, maxUserVisionEvidenceBytes)
 				final := joinVisualEvidenceInput(stripResolvedUserImageContext(input, images), evidence)
 				return ImageRouteResult{
 					Mode: ImageRouteVisionEvidence, Input: final, Images: nil, VisionUsage: usage,

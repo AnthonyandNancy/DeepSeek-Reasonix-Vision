@@ -624,6 +624,66 @@ func TestMarkdownLinkIsNotTreatedAsMedia(t *testing.T) {
 	}
 }
 
+// Several images produce several evidence blocks. Without a label they are
+// indistinguishable in history, and "the second image" becomes unaddressable.
+func TestEvidenceBlockCarriesAddressableMediaLabel(t *testing.T) {
+	workspace := t.TempDir()
+	writeImageRouteConfig(t, workspace)
+	sess := agent.NewSession("system")
+	sess.Add(provider.Message{Role: provider.RoleUser, Images: []string{"data:image/png;base64,first"}})
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{
+		Executor: exec, WorkspaceRoot: workspace, ModelRef: "text/main", VisionModelRef: "vision/vl",
+		VisionDescriber: &routeEvidenceDescriber{},
+	})
+
+	if base := c.conversationMediaIndexBase(); base != 1 {
+		t.Fatalf("conversation media base = %d, want 1 stored image", base)
+	}
+	route := c.routeResolvedMediaOnce(context.Background(), &ImageRouteState{}, "看这张 @shot.png", "看这张", MediaTurnResolution{
+		Images: []ResolvedImage{{Ref: ".reasonix/attachments/shot.png", DataURL: "data:image/png;base64," + tinyPNG}},
+	})
+	if !strings.Contains(route.Input, `index="2"`) {
+		t.Fatalf("evidence block lost its conversation index:\n%s", route.Input)
+	}
+	if !strings.Contains(route.Input, `ref="shot.png"`) {
+		t.Fatalf("evidence block lost its media ref:\n%s", route.Input)
+	}
+}
+
+// The label is only useful if it addresses the image analyze_media_with_vision
+// would return for the same number. Both must flatten-then-dedupe identically.
+func TestMediaIndexBaseMatchesToolImageIndex(t *testing.T) {
+	sess := agent.NewSession("system")
+	sess.Add(provider.Message{Role: provider.RoleUser, Images: []string{"data:image/png;base64,first"}})
+	sess.Add(provider.Message{Role: provider.RoleUser, Images: []string{"data:image/png;base64,second"}})
+	exec := agent.New(nil, tool.NewRegistry(), sess, agent.Options{}, event.Discard)
+	c := New(Options{Executor: exec, ModelRef: "text/main", VisionModelRef: "vision/vl"})
+
+	if base := c.conversationMediaIndexBase(); base != 2 {
+		t.Fatalf("media base = %d, want 2", base)
+	}
+	// A block labelled index="2" must resolve through image_index=2 (zero-based 1).
+	images, _, err := c.ResolveHistoricalVisionMedia(context.Background(), vision.MediaSelection{Index: 1})
+	if err != nil || len(images) != 1 || images[0].DataURL != "data:image/png;base64,second" {
+		t.Fatalf("image_index=2 resolved %+v (err=%v), want the second image", images, err)
+	}
+}
+
+// A batch analysed as one block cannot claim a single position.
+func TestMultiImageEvidenceOmitsIndexButKeepsRefs(t *testing.T) {
+	id := evidenceMediaID(0, []ResolvedImage{
+		{Ref: ".reasonix/attachments/a.png"},
+		{Ref: ".reasonix/attachments/b.png"},
+	})
+	if id.Index != 0 {
+		t.Fatalf("multi-image batch claimed index %d", id.Index)
+	}
+	if id.Ref != "a.png, b.png" {
+		t.Fatalf("multi-image refs = %q, want both names", id.Ref)
+	}
+}
+
 type imageRouteTestTool struct{}
 
 func (imageRouteTestTool) Name() string                                             { return "mcp__vision__analyze_image" }
