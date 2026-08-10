@@ -204,8 +204,10 @@ func anyStrings(value any) []string {
 	return out
 }
 
-// A stored reading is free; refresh and a focused instruction are not, because
-// both ask for something the stored record cannot answer.
+// The stored record is the fullest reading of an image. A focused instruction
+// almost always asks for something already inside it ("详细识别…人物、服饰、
+// 背景"), so it must not trigger a second pass over the same pixels — only an
+// explicit refresh may.
 func TestAnalyzeMediaServesStoredReadingUnlessAskedOtherwise(t *testing.T) {
 	images := []Image{{Ref: "shot.png", Path: ".reasonix/attachments/shot.png", DataURL: "data:image/png;base64,AA=="}}
 	resolve := func(context.Context, MediaSelection) ([]Image, []string, error) {
@@ -218,9 +220,10 @@ func TestAnalyzeMediaServesStoredReadingUnlessAskedOtherwise(t *testing.T) {
 		return "", false
 	}
 	for name, args := range map[string]string{
-		"default":  `{}`,
-		"by index": `{"image_index":1}`,
-		"explicit": `{"selection":"latest"}`,
+		"default":     `{}`,
+		"by index":    `{"image_index":1}`,
+		"explicit":    `{"selection":"latest"}`,
+		"instruction": `{"instruction":"请详细识别这张图片的内容:人物、服饰、风格、背景、画面构成等"}`,
 	} {
 		d := &analyzeToolDescriber{evidence: analyzeToolEvidence()}
 		tl := NewAnalyzeMediaToolWithStore("vision/vl", d, resolve, nil, lookup)
@@ -229,21 +232,33 @@ func TestAnalyzeMediaServesStoredReadingUnlessAskedOtherwise(t *testing.T) {
 			t.Fatalf("[%s] out=%q err=%v, want the stored reading", name, out, err)
 		}
 		if d.calls != 0 {
-			t.Fatalf("[%s] stored reading still paid for the visual model", name)
+			t.Fatalf("[%s] re-ran the visual model over already-analyzed pixels", name)
 		}
 	}
-	for name, args := range map[string]string{
-		"refresh":     `{"refresh":true}`,
-		"instruction": `{"instruction":"what is in the lower right corner"}`,
-	} {
-		d := &analyzeToolDescriber{evidence: analyzeToolEvidence()}
-		tl := NewAnalyzeMediaToolWithStore("vision/vl", d, resolve, nil, lookup)
-		if _, err := tl.Execute(context.Background(), json.RawMessage(args)); err != nil {
-			t.Fatalf("[%s] Execute: %v", name, err)
-		}
-		if d.calls != 1 {
-			t.Fatalf("[%s] visual model calls = %d, want a fresh reading", name, d.calls)
-		}
+
+	d := &analyzeToolDescriber{evidence: analyzeToolEvidence()}
+	tl := NewAnalyzeMediaToolWithStore("vision/vl", d, resolve, nil, lookup)
+	if _, err := tl.Execute(context.Background(), json.RawMessage(`{"refresh":true}`)); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if d.calls != 1 {
+		t.Fatalf("refresh calls = %d, want a fresh reading", d.calls)
+	}
+}
+
+// Without a stored record there is nothing to serve, so the model runs.
+func TestAnalyzeMediaFallsBackToTheModelWithoutAStoredRecord(t *testing.T) {
+	images := []Image{{Ref: "shot.png", Path: ".reasonix/attachments/shot.png", DataURL: "data:image/png;base64,AA=="}}
+	resolve := func(context.Context, MediaSelection) ([]Image, []string, error) {
+		return images, []string{".reasonix/attachments/shot.png"}, nil
+	}
+	d := &analyzeToolDescriber{evidence: analyzeToolEvidence()}
+	tl := NewAnalyzeMediaToolWithStore("vision/vl", d, resolve, nil, func(string) (string, bool) { return "", false })
+	if _, err := tl.Execute(context.Background(), json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if d.calls != 1 {
+		t.Fatalf("visual model calls = %d, want one", d.calls)
 	}
 }
 
