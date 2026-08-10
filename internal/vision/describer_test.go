@@ -2,6 +2,7 @@ package vision
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -19,17 +20,33 @@ func TestProviderDescriberDefaultTimeoutCoversSlowVisionEndpoints(t *testing.T) 
 type captureProvider struct {
 	req    provider.Request
 	chunks []provider.Chunk
+	err    error
 }
 
 func (p *captureProvider) Name() string { return "capture" }
 func (p *captureProvider) Stream(_ context.Context, req provider.Request) (<-chan provider.Chunk, error) {
 	p.req = req
+	if p.err != nil {
+		return nil, p.err
+	}
 	ch := make(chan provider.Chunk, len(p.chunks))
 	for _, c := range p.chunks {
 		ch <- c
 	}
 	close(ch)
 	return ch, nil
+}
+
+func terminalVisionStage(events []event.Event) event.VisionProgressStage {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind == event.VisionProgress && events[i].VisionProgress != nil {
+			stage := events[i].VisionProgress.Stage
+			if stage == event.VisionStageReady || stage == event.VisionStageFailed || stage == event.VisionStageCancelled {
+				return stage
+			}
+		}
+	}
+	return ""
 }
 
 type gatedProvider struct {
@@ -155,6 +172,32 @@ func TestProviderDescriberRejectsToolCall(t *testing.T) {
 	d := NewProviderDescriber(p, nil, nil)
 	if _, _, err := d.DescribeOnce(context.Background(), "p/vision", []Image{{DataURL: "data:image/png;base64,AA=="}}, ""); err != ErrUnexpectedVisionToolCall {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestProviderDescriberReportsCancelledWhenConnectReturnsContextCanceled(t *testing.T) {
+	p := &captureProvider{err: context.Canceled}
+	var events []event.Event
+	d := NewProviderDescriber(p, nil, event.FuncSink(func(e event.Event) { events = append(events, e) }))
+	_, _, err := d.DescribeOnce(context.Background(), "p/vision", []Image{{DataURL: "data:image/png;base64,AA=="}}, "")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("DescribeOnce error = %v, want context.Canceled", err)
+	}
+	if got := terminalVisionStage(events); got != event.VisionStageCancelled {
+		t.Fatalf("terminal vision stage = %q, want %q", got, event.VisionStageCancelled)
+	}
+}
+
+func TestProviderDescriberReportsCancelledWhenStreamChunkIsContextCanceled(t *testing.T) {
+	p := &captureProvider{chunks: []provider.Chunk{{Type: provider.ChunkError, Err: context.Canceled}}}
+	var events []event.Event
+	d := NewProviderDescriber(p, nil, event.FuncSink(func(e event.Event) { events = append(events, e) }))
+	_, _, err := d.DescribeOnce(context.Background(), "p/vision", []Image{{DataURL: "data:image/png;base64,AA=="}}, "")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("DescribeOnce error = %v, want context.Canceled", err)
+	}
+	if got := terminalVisionStage(events); got != event.VisionStageCancelled {
+		t.Fatalf("terminal vision stage = %q, want %q", got, event.VisionStageCancelled)
 	}
 }
 

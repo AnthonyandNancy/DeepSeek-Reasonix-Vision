@@ -124,7 +124,7 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 	d.emitProgress(ctx, modelRef, event.VisionStageConnecting, started, "", "", "")
 	ch, err := d.prov.Stream(visionCtx, req)
 	if err != nil {
-		d.emitTerminalProgress(ctx, emitTerminal, modelRef, event.VisionStageFailed, started, visionFailureDetail(err))
+		d.emitTerminalProgress(ctx, emitTerminal, modelRef, visionTerminalStage(visionCtx, err), started, visionFailureDetail(err))
 		return Evidence{}, nil, fmt.Errorf("vision: %w", err)
 	}
 	d.emitProgress(ctx, modelRef, event.VisionStageWaiting, started, "", "", "")
@@ -154,7 +154,7 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 			}
 		case provider.ChunkError:
 			if chunk.Err != nil {
-				d.emitTerminalProgress(ctx, emitTerminal, modelRef, event.VisionStageFailed, started, visionFailureDetail(chunk.Err))
+				d.emitTerminalProgress(ctx, emitTerminal, modelRef, visionTerminalStage(visionCtx, chunk.Err), started, visionFailureDetail(chunk.Err))
 				return Evidence{}, nil, chunk.Err
 			}
 			d.emitTerminalProgress(ctx, emitTerminal, modelRef, event.VisionStageFailed, started, "provider_error")
@@ -162,11 +162,7 @@ func (d *ProviderDescriber) describe(ctx context.Context, modelRef, systemPrompt
 		}
 	}
 	if visionCtx.Err() != nil {
-		stage := event.VisionStageFailed
-		if errors.Is(visionCtx.Err(), context.Canceled) && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			stage = event.VisionStageCancelled
-		}
-		d.emitTerminalProgress(ctx, emitTerminal, modelRef, stage, started, visionFailureDetail(visionCtx.Err()))
+		d.emitTerminalProgress(ctx, emitTerminal, modelRef, visionTerminalStage(visionCtx, visionCtx.Err()), started, visionFailureDetail(visionCtx.Err()))
 		return Evidence{}, nil, visionCtx.Err()
 	}
 	d.emitProgress(ctx, modelRef, event.VisionStageParsing, started, "", "", "")
@@ -217,6 +213,16 @@ func visionFailureDetail(err error) string {
 		return "authentication_failed"
 	}
 	return "provider_error"
+}
+
+func visionTerminalStage(ctx context.Context, err error) event.VisionProgressStage {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return event.VisionStageFailed
+	}
+	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		return event.VisionStageCancelled
+	}
+	return event.VisionStageFailed
 }
 
 func imageDataURLs(images []Image) []string {
