@@ -4,6 +4,7 @@ import type { CheckpointMeta, VisualAnalysisRecord, VisualAnalysisStage } from "
 import type { InvocationMetadataMap } from "../lib/invocationDisplay";
 import { useT } from "../lib/i18n";
 import { AssistantMessage, InvocationMetadataContext, TurnActions, UserMessage } from "./Message";
+import { Markdown } from "./Markdown";
 import { ProcessBrainIcon, ProcessCompactIcon, ProcessPhaseIcon } from "./ProcessCard";
 import { ToolCard } from "./ToolCard";
 import { ExtensionCard } from "./ExtensionCard";
@@ -115,7 +116,9 @@ function InlineAssistantReasoning({ item }: { item: AssistantItem }) {
         <span>{running ? t("msg.thinkingRunning") : t("msg.thinking")}</span>
         <ChevronRight className={`reasoning__chevron${open ? " reasoning__chevron--open" : ""}`} size={12} />
       </button>
-      <div ref={bodyRef} className="turn-collapse__inline-reasoning">{visibleReasoning}</div>
+      <div ref={bodyRef} className="turn-collapse__inline-reasoning">
+        <Markdown text={visibleReasoning} streaming={running} />
+      </div>
     </div>
   );
 }
@@ -1758,7 +1761,7 @@ function VisionStageItem({ stage, active, model, durationMs }: { stage: VisualAn
         {reasoning && (
           <div className="vision-process__content" data-vision-content="reasoning">
             <span className="vision-process__content-label">{t("settings.typography.preview.reasoning")}</span>
-            <pre>{reasoning}</pre>
+            <Markdown text={reasoning} streaming={active} />
           </div>
         )}
       </div>
@@ -1766,12 +1769,17 @@ function VisionStageItem({ stage, active, model, durationMs }: { stage: VisualAn
   );
 }
 
+// OCR is transcribed image text: any markdown syntax inside it is content the
+// picture happened to contain, not formatting, and its line breaks carry the
+// page's structure. It stays literal. A summary is prose and renders as such.
 function VisionResultSection({ label, value, kind }: { label: string; value: string; kind: "summary" | "ocr" }) {
   if (!value.trim()) return null;
   return (
-    <div className="vision-process__result" data-vision-content={kind}>
+    <div className="vision-process__result vision-process__content" data-vision-content={kind}>
       <span className="vision-process__content-label">{label}</span>
-      <div className="turn-collapse__inline-reasoning">{value}</div>
+      {kind === "ocr"
+        ? <pre>{value}</pre>
+        : <div className="turn-collapse__inline-reasoning"><Markdown text={value} /></div>}
     </div>
   );
 }
